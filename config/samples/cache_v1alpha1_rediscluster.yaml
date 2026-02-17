@@ -1,0 +1,19 @@
+apiVersion: cache.mudit.dev/v1alpha1
+kind: RedisCluster
+metadata:
+  labels:
+    app.kubernetes.io/name: redis-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: rediscluster-sample
+spec:
+  replicas: 3
+  version: "7.2"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  storage:
+    size: 1Gi
