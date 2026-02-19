@@ -94,6 +94,40 @@ test-e2e: setup-test-e2e manifests generate fmt vet ## Run the e2e tests. Expect
 cleanup-test-e2e: ## Tear down the Kind cluster used for e2e tests
 	@$(KIND) delete cluster --name $(KIND_CLUSTER)
 
+##@ Local cluster (kind)
+
+DEV_CLUSTER ?= redis-operator
+DEV_IMG ?= redis-operator:dev
+DEV_NAMESPACE ?= redis-operator-system
+SAMPLE ?= config/samples/cache_v1alpha1_rediscluster.yaml
+
+.PHONY: kind-up
+kind-up: ## Create the local kind cluster if it does not exist
+	@command -v $(KIND) >/dev/null 2>&1 || { echo "kind is not installed"; exit 1; }
+	@case "$$($(KIND) get clusters)" in \
+		*"$(DEV_CLUSTER)"*) echo "kind cluster '$(DEV_CLUSTER)' already exists" ;; \
+		*) $(KIND) create cluster --name $(DEV_CLUSTER) ;; \
+	esac
+	$(KUBECTL) config use-context kind-$(DEV_CLUSTER)
+
+.PHONY: kind-deploy
+kind-deploy: kind-up ## Create the cluster, build and load the image, deploy the operator and apply the sample RedisCluster
+	$(MAKE) docker-build IMG=$(DEV_IMG)
+	$(KIND) load docker-image $(DEV_IMG) --name $(DEV_CLUSTER)
+	$(MAKE) install deploy IMG=$(DEV_IMG)
+	$(KUBECTL) -n $(DEV_NAMESPACE) rollout restart deployment/redis-operator-controller-manager
+	$(KUBECTL) -n $(DEV_NAMESPACE) rollout status deployment/redis-operator-controller-manager --timeout=180s
+	$(KUBECTL) apply -f $(SAMPLE)
+	@echo "Watch it come up with: $(KUBECTL) get rediscluster,statefulset,pods -w"
+
+.PHONY: kind-down
+kind-down: ## Delete the local kind cluster
+	$(KIND) delete cluster --name $(DEV_CLUSTER)
+
+.PHONY: demo
+demo: ## Run the self-healing demo against the local kind cluster
+	bash hack/demo.sh
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run
