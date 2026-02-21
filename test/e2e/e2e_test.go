@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -33,307 +34,294 @@ import (
 	"github.com/Muditjain13/redis-operator/test/utils"
 )
 
-// namespace where the project is deployed in
-const namespace = "redis-operator-system"
+const (
+	operatorNamespace  = "redis-operator-system"
+	operatorDeployment = "redis-operator-controller-manager"
 
-// serviceAccountName created for the project
-const serviceAccountName = "redis-operator-controller-manager"
+	// The sample shipped with the operator: 3 replicas of Redis 7.2.
+	sampleManifest = "config/samples/cache_v1alpha1_rediscluster.yaml"
+	clusterName    = "rediscluster-sample"
+	replicas       = 3
+	initialVersion = "7.2"
+	upgradeVersion = "7.4"
 
-// metricsServiceName is the name of the metrics service of the project
-const metricsServiceName = "redis-operator-controller-manager-metrics-service"
+	podSelector = "app.kubernetes.io/instance=" + clusterName
+)
 
-// metricsRoleBindingName is the name of the RBAC that will be created to allow get the metrics data
-const metricsRoleBindingName = "redis-operator-metrics-binding"
+// measurements are written to disk so CI can publish them as badges. Every
+// value is measured in this run; nothing here is hardcoded.
+type measurements struct {
+	KubernetesVersion string  `json:"kubernetesVersion"`
+	SelfHealSeconds   float64 `json:"selfHealSeconds"`
+	PodsUpgraded      int     `json:"podsUpgraded"`
+	PodsTotal         int     `json:"podsTotal"`
+}
 
-var _ = Describe("Manager", Ordered, func() {
-	var controllerPodName string
+func (m measurements) write() {
+	path := os.Getenv("E2E_METRICS_FILE")
+	if path == "" {
+		root, _ := utils.GetProjectDir()
+		path = filepath.Join(root, "e2e-metrics", "e2e-metrics.json")
+	}
+	data, err := json.MarshalIndent(m, "", "  ")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(os.MkdirAll(filepath.Dir(path), 0o755)).To(Succeed())
+	Expect(os.WriteFile(path, append(data, '\n'), 0o644)).To(Succeed())
+	_, _ = fmt.Fprintf(GinkgoWriter, "wrote measurements to %s: %s\n", path, data)
+}
 
-	// Before running the tests, set up the environment by creating the namespace,
-	// enforce the restricted security policy to the namespace, installing CRDs,
-	// and deploying the controller.
+var _ = Describe("RedisCluster", Ordered, func() {
+	var measured measurements
+
 	BeforeAll(func() {
-		By("creating manager namespace")
-		cmd := exec.Command("kubectl", "create", "ns", namespace)
-		_, err := utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to create namespace")
-
-		By("labeling the namespace to enforce the restricted security policy")
-		cmd = exec.Command("kubectl", "label", "--overwrite", "ns", namespace,
-			"pod-security.kubernetes.io/enforce=restricted")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to label namespace with restricted policy")
-
-		By("installing CRDs")
-		cmd = exec.Command("make", "install")
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to install CRDs")
-
-		By("deploying the controller-manager")
-		cmd = exec.Command("make", "deploy", fmt.Sprintf("IMG=%s", managerImage))
-		_, err = utils.Run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to deploy the controller-manager")
+		By("installing the CRD and deploying the operator")
+		run("make", "install")
+		run("make", "deploy", "IMG="+managerImage)
+		kubectl("-n", operatorNamespace, "rollout", "status", "deployment/"+operatorDeployment, "--timeout=180s")
+		measured.KubernetesVersion = serverVersion()
 	})
 
-	// After all tests have been executed, clean up by undeploying the controller, uninstalling CRDs,
-	// and deleting the namespace.
 	AfterAll(func() {
-		By("cleaning up the curl pod for metrics")
-		cmd := exec.Command("kubectl", "delete", "pod", "curl-metrics", "-n", namespace)
-		_, _ = utils.Run(cmd)
-
-		By("undeploying the controller-manager")
-		cmd = exec.Command("make", "undeploy")
-		_, _ = utils.Run(cmd)
-
-		By("uninstalling CRDs")
-		cmd = exec.Command("make", "uninstall")
-		_, _ = utils.Run(cmd)
-
-		By("removing manager namespace")
-		cmd = exec.Command("kubectl", "delete", "ns", namespace)
-		_, _ = utils.Run(cmd)
+		By("removing the RedisCluster, the operator and the CRD")
+		_, _ = tryKubectl("delete", "rediscluster", clusterName, "--ignore-not-found", "--wait=true", "--timeout=120s")
+		_, _ = tryRun("make", "undeploy", "ignore-not-found=true")
+		_, _ = tryRun("make", "uninstall", "ignore-not-found=true")
+		measured.write()
 	})
 
-	// After each test, check for failures and collect logs, events,
-	// and pod descriptions for debugging.
 	AfterEach(func() {
-		specReport := CurrentSpecReport()
-		if specReport.Failed() {
-			By("Fetching controller manager pod logs")
-			cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
-			controllerLogs, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Controller logs:\n %s", controllerLogs)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Controller logs: %s", err)
-			}
-
-			By("Fetching Kubernetes events")
-			cmd = exec.Command("kubectl", "get", "events", "-n", namespace, "--sort-by=.lastTimestamp")
-			eventsOutput, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Kubernetes events:\n%s", eventsOutput)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get Kubernetes events: %s", err)
-			}
-
-			By("Fetching curl-metrics logs")
-			cmd = exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
-			metricsOutput, err := utils.Run(cmd)
-			if err == nil {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Metrics logs:\n %s", metricsOutput)
-			} else {
-				_, _ = fmt.Fprintf(GinkgoWriter, "Failed to get curl-metrics logs: %s", err)
-			}
-
-			By("Fetching controller manager pod description")
-			cmd = exec.Command("kubectl", "describe", "pod", controllerPodName, "-n", namespace)
-			podDescription, err := utils.Run(cmd)
-			if err == nil {
-				fmt.Println("Pod description:\n", podDescription)
-			} else {
-				fmt.Println("Failed to describe controller pod")
-			}
+		if CurrentSpecReport().Failed() {
+			dumpDiagnostics()
 		}
 	})
 
-	SetDefaultEventuallyTimeout(2 * time.Minute)
-	SetDefaultEventuallyPollingInterval(time.Second)
+	It("creates a 3-replica cluster and reports Ready 3/3", func() {
+		kubectl("apply", "-f", sampleManifest)
 
-	Context("Manager", func() {
-		It("should run successfully", func() {
-			By("validating that the controller-manager pod is running as expected")
-			verifyControllerUp := func(g Gomega) {
-				By("getting the name of the controller-manager pod")
-				cmd := exec.Command("kubectl", "get",
-					"pods", "-l", "control-plane=controller-manager",
-					"-o", "go-template={{ range .items }}"+
-						"{{ if not .metadata.deletionTimestamp }}"+
-						"{{ .metadata.name }}"+
-						"{{ \"\\n\" }}{{ end }}{{ end }}",
-					"-n", namespace,
-				)
+		Eventually(func(g Gomega) {
+			g.Expect(readyReplicas()).To(Equal(replicas))
+			g.Expect(condition("Available")).To(Equal("True"))
+			g.Expect(condition("Progressing")).To(Equal("False"))
+		}).WithTimeout(6 * time.Minute).WithPolling(2 * time.Second).Should(Succeed())
 
-				podOutput, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve controller-manager pod information")
-				podNames := utils.GetNonEmptyLines(podOutput)
-				g.Expect(podNames).To(HaveLen(1), "expected 1 controller pod running")
-				controllerPodName = podNames[0]
-				g.Expect(controllerPodName).To(ContainSubstring("controller-manager"))
+		Expect(currentVersion()).To(Equal(initialVersion))
+		Expect(getPods()).To(HaveLen(replicas))
+	})
 
-				By("validating the pod's status")
-				cmd = exec.Command("kubectl", "get",
-					"pods", controllerPodName, "-o", "jsonpath={.status.phase}",
-					"-n", namespace,
-				)
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Running"), "Incorrect controller-manager pod status")
+	It("restores a deleted StatefulSet and its Pods", func() {
+		originalSTS := getStatefulSet()
+		originalPods := map[string]bool{}
+		for _, p := range getPods() {
+			originalPods[p.Metadata.UID] = true
+		}
+
+		By("deleting the StatefulSet, which also removes its Pods")
+		start := time.Now()
+		kubectl("delete", "statefulset", clusterName, "--wait=true")
+
+		By("waiting for the operator to recreate it with brand-new, Ready Pods")
+		Eventually(func(g Gomega) {
+			sts, err := tryGetStatefulSet()
+			g.Expect(err).NotTo(HaveOccurred(), "StatefulSet has not been recreated yet")
+			g.Expect(sts.Metadata.UID).NotTo(Equal(originalSTS.Metadata.UID))
+			g.Expect(sts.Status.ReadyReplicas).To(Equal(replicas))
+
+			pods := getPods()
+			g.Expect(pods).To(HaveLen(replicas))
+			for _, p := range pods {
+				g.Expect(originalPods).NotTo(HaveKey(p.Metadata.UID), "pod %s is a pre-deletion pod", p.Metadata.Name)
+				g.Expect(p.ready()).To(BeTrue(), "pod %s is not Ready", p.Metadata.Name)
 			}
-			Eventually(verifyControllerUp).Should(Succeed())
-		})
+		}).WithTimeout(6 * time.Minute).WithPolling(time.Second).Should(Succeed())
+		measured.SelfHealSeconds = time.Since(start).Seconds()
 
-		It("should ensure the metrics endpoint is serving metrics", func() {
-			By("creating a ClusterRoleBinding for the service account to allow access to metrics")
-			cmd := exec.Command("kubectl", "create", "clusterrolebinding", metricsRoleBindingName,
-				"--clusterrole=redis-operator-metrics-reader",
-				fmt.Sprintf("--serviceaccount=%s:%s", namespace, serviceAccountName),
-			)
-			_, err := utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create ClusterRoleBinding")
+		By("checking the operator reports the cluster healthy again")
+		Eventually(func(g Gomega) {
+			g.Expect(readyReplicas()).To(Equal(replicas))
+			g.Expect(condition("Progressing")).To(Equal("False"))
+		}).WithTimeout(time.Minute).WithPolling(time.Second).Should(Succeed())
+		Expect(kubectl("events", "--for", "rediscluster/"+clusterName)).
+			To(ContainSubstring("Recreated missing StatefulSet"))
+	})
 
-			By("validating that the metrics service is available")
-			cmd = exec.Command("kubectl", "get", "service", metricsServiceName, "-n", namespace)
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Metrics service should exist")
+	It("completes a rolling upgrade after the version changes", func() {
+		By("changing spec.version")
+		kubectl("patch", "rediscluster", clusterName, "--type=merge",
+			"-p", fmt.Sprintf(`{"spec":{"version":%q}}`, upgradeVersion))
 
-			By("getting the service account token")
-			token, err := serviceAccountToken()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(token).NotTo(BeEmpty())
-
-			By("ensuring the controller pod is ready")
-			verifyControllerPodReady := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pod", controllerPodName, "-n", namespace,
-					"-o", "jsonpath={.status.conditions[?(@.type=='Ready')].status}")
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("True"), "Controller pod not ready")
+		By("sampling ready replicas while Pods are replaced")
+		lowestReady := replicas
+		Eventually(func(g Gomega) {
+			if sts, err := tryGetStatefulSet(); err == nil {
+				lowestReady = min(lowestReady, sts.Status.ReadyReplicas)
 			}
-			Eventually(verifyControllerPodReady, 3*time.Minute, time.Second).Should(Succeed())
+			g.Expect(currentVersion()).To(Equal(upgradeVersion))
+			g.Expect(condition("Progressing")).To(Equal("False"))
+			g.Expect(readyReplicas()).To(Equal(replicas))
+		}).WithTimeout(10 * time.Minute).WithPolling(time.Second).Should(Succeed())
 
-			By("verifying that the controller manager is serving the metrics server")
-			verifyMetricsServerStarted := func(g Gomega) {
-				cmd := exec.Command("kubectl", "logs", controllerPodName, "-n", namespace)
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(ContainSubstring("Serving metrics server"),
-					"Metrics server not yet started")
+		// A rolling update replaces one Pod at a time, so at most one is ever down.
+		Expect(lowestReady).To(BeNumerically(">=", replicas-1),
+			"more than one replica was unavailable during the upgrade")
+
+		By("verifying every Pod runs the new version")
+		pods := getPods()
+		for _, p := range pods {
+			if p.image() == "redis:"+upgradeVersion {
+				measured.PodsUpgraded++
 			}
-			Eventually(verifyMetricsServerStarted, 3*time.Minute, time.Second).Should(Succeed())
-
-			// +kubebuilder:scaffold:e2e-metrics-webhooks-readiness
-
-			By("creating the curl-metrics pod to access the metrics endpoint")
-			cmd = exec.Command("kubectl", "run", "curl-metrics", "--restart=Never",
-				"--namespace", namespace,
-				"--image=curlimages/curl:latest",
-				"--overrides",
-				fmt.Sprintf(`{
-					"spec": {
-						"containers": [{
-							"name": "curl",
-							"image": "curlimages/curl:latest",
-							"command": ["/bin/sh", "-c"],
-							"args": [
-								"for i in $(seq 1 30); do curl -v -k -H 'Authorization: Bearer %s' https://%s.%s.svc.cluster.local:8443/metrics && exit 0 || sleep 2; done; exit 1"
-							],
-							"securityContext": {
-								"readOnlyRootFilesystem": true,
-								"allowPrivilegeEscalation": false,
-								"capabilities": {
-									"drop": ["ALL"]
-								},
-								"runAsNonRoot": true,
-								"runAsUser": 1000,
-								"seccompProfile": {
-									"type": "RuntimeDefault"
-								}
-							}
-						}],
-						"serviceAccountName": "%s"
-					}
-				}`, token, metricsServiceName, namespace, serviceAccountName))
-			_, err = utils.Run(cmd)
-			Expect(err).NotTo(HaveOccurred(), "Failed to create curl-metrics pod")
-
-			By("waiting for the curl-metrics pod to complete.")
-			verifyCurlUp := func(g Gomega) {
-				cmd := exec.Command("kubectl", "get", "pods", "curl-metrics",
-					"-o", "jsonpath={.status.phase}",
-					"-n", namespace)
-				output, err := utils.Run(cmd)
-				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(output).To(Equal("Succeeded"), "curl pod in wrong status")
-			}
-			Eventually(verifyCurlUp, 5*time.Minute).Should(Succeed())
-
-			By("getting the metrics by checking curl-metrics logs")
-			verifyMetricsAvailable := func(g Gomega) {
-				metricsOutput, err := getMetricsOutput()
-				g.Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-				g.Expect(metricsOutput).NotTo(BeEmpty())
-				g.Expect(metricsOutput).To(ContainSubstring("< HTTP/1.1 200 OK"))
-			}
-			Eventually(verifyMetricsAvailable, 2*time.Minute).Should(Succeed())
-		})
-
-		// +kubebuilder:scaffold:e2e-webhooks-checks
-
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput, err := getMetricsOutput()
-		// Expect(err).NotTo(HaveOccurred(), "Failed to retrieve logs from curl pod")
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+			Expect(p.ready()).To(BeTrue(), "pod %s is not Ready", p.Metadata.Name)
+		}
+		measured.PodsTotal = len(pods)
+		Expect(measured.PodsUpgraded).To(Equal(measured.PodsTotal))
+		Expect(measured.PodsTotal).To(Equal(replicas))
+		Expect(kubectl("events", "--for", "rediscluster/"+clusterName)).To(ContainSubstring("Upgraded"))
 	})
 })
 
-// serviceAccountToken returns a token for the specified service account in the given namespace.
-// It uses the Kubernetes TokenRequest API to generate a token by directly sending a request
-// and parsing the resulting token from the API response.
-func serviceAccountToken() (string, error) {
-	const tokenRequestRawString = `{
-		"apiVersion": "authentication.k8s.io/v1",
-		"kind": "TokenRequest"
-	}`
+// --- kubectl / make helpers ---
 
-	By("creating temporary file to store the token request")
-	secretName := fmt.Sprintf("%s-token-request", serviceAccountName)
-	tokenRequestFile := filepath.Join("/tmp", secretName)
-	err := os.WriteFile(tokenRequestFile, []byte(tokenRequestRawString), os.FileMode(0o644))
+func tryRun(name string, args ...string) (string, error) {
+	return utils.Run(exec.Command(name, args...))
+}
+
+func run(name string, args ...string) string {
+	GinkgoHelper()
+	out, err := tryRun(name, args...)
+	Expect(err).NotTo(HaveOccurred())
+	return out
+}
+
+func tryKubectl(args ...string) (string, error) {
+	out, err := tryRun("kubectl", args...)
+	return strings.TrimSpace(out), err
+}
+
+func kubectl(args ...string) string {
+	GinkgoHelper()
+	out, err := tryKubectl(args...)
+	Expect(err).NotTo(HaveOccurred())
+	return out
+}
+
+func serverVersion() string {
+	GinkgoHelper()
+	var v struct {
+		ServerVersion struct {
+			GitVersion string `json:"gitVersion"`
+		} `json:"serverVersion"`
+	}
+	Expect(json.Unmarshal([]byte(kubectl("version", "-o", "json")), &v)).To(Succeed())
+	Expect(v.ServerVersion.GitVersion).NotTo(BeEmpty())
+	return v.ServerVersion.GitVersion
+}
+
+// statusField reads one field of the RedisCluster with a JSONPath expression.
+// It returns "" on any error so callers inside Eventually simply retry.
+func statusField(jsonpath string) string {
+	out, err := tryKubectl("get", "rediscluster", clusterName, "-o", "jsonpath="+jsonpath)
 	if err != nil {
-		return "", err
+		return ""
 	}
-
-	var out string
-	verifyTokenCreation := func(g Gomega) {
-		By("executing kubectl command to create the token")
-		cmd := exec.Command("kubectl", "create", "--raw", fmt.Sprintf(
-			"/api/v1/namespaces/%s/serviceaccounts/%s/token",
-			namespace,
-			serviceAccountName,
-		), "-f", tokenRequestFile)
-
-		output, err := cmd.CombinedOutput()
-		g.Expect(err).NotTo(HaveOccurred())
-
-		By("parsing the JSON output to extract the token")
-		var token tokenRequest
-		err = json.Unmarshal(output, &token)
-		g.Expect(err).NotTo(HaveOccurred())
-
-		out = token.Status.Token
-	}
-	Eventually(verifyTokenCreation).Should(Succeed())
-
-	return out, err
+	return out
 }
 
-// getMetricsOutput retrieves and returns the logs from the curl pod used to access the metrics endpoint.
-func getMetricsOutput() (string, error) {
-	By("getting the curl-metrics logs")
-	cmd := exec.Command("kubectl", "logs", "curl-metrics", "-n", namespace)
-	return utils.Run(cmd)
+func readyReplicas() int {
+	var n int
+	if _, err := fmt.Sscanf(statusField("{.status.readyReplicas}"), "%d", &n); err != nil {
+		return 0 // not reported yet
+	}
+	return n
 }
 
-// tokenRequest is a simplified representation of the Kubernetes TokenRequest API response,
-// containing only the token field that we need to extract.
-type tokenRequest struct {
+func currentVersion() string { return statusField("{.status.currentVersion}") }
+
+func condition(condType string) string {
+	return statusField(fmt.Sprintf(`{.status.conditions[?(@.type==%q)].status}`, condType))
+}
+
+// --- typed views of the objects the tests inspect ---
+
+type statefulSet struct {
+	Metadata struct {
+		UID string `json:"uid"`
+	} `json:"metadata"`
 	Status struct {
-		Token string `json:"token"`
+		ReadyReplicas int `json:"readyReplicas"`
 	} `json:"status"`
+}
+
+type pod struct {
+	Metadata struct {
+		Name string `json:"name"`
+		UID  string `json:"uid"`
+	} `json:"metadata"`
+	Spec struct {
+		Containers []struct {
+			Image string `json:"image"`
+		} `json:"containers"`
+	} `json:"spec"`
+	Status struct {
+		Conditions []struct {
+			Type   string `json:"type"`
+			Status string `json:"status"`
+		} `json:"conditions"`
+	} `json:"status"`
+}
+
+func (p pod) image() string {
+	if len(p.Spec.Containers) == 0 {
+		return ""
+	}
+	return p.Spec.Containers[0].Image
+}
+
+func (p pod) ready() bool {
+	for _, c := range p.Status.Conditions {
+		if c.Type == "Ready" {
+			return c.Status == "True"
+		}
+	}
+	return false
+}
+
+func tryGetStatefulSet() (statefulSet, error) {
+	var sts statefulSet
+	out, err := tryKubectl("get", "statefulset", clusterName, "-o", "json")
+	if err != nil {
+		return sts, err
+	}
+	return sts, json.Unmarshal([]byte(out), &sts)
+}
+
+func getStatefulSet() statefulSet {
+	GinkgoHelper()
+	sts, err := tryGetStatefulSet()
+	Expect(err).NotTo(HaveOccurred())
+	return sts
+}
+
+func getPods() []pod {
+	GinkgoHelper()
+	var list struct {
+		Items []pod `json:"items"`
+	}
+	Expect(json.Unmarshal([]byte(kubectl("get", "pods", "-l", podSelector, "-o", "json")), &list)).To(Succeed())
+	return list.Items
+}
+
+// dumpDiagnostics prints what is needed to debug a failed spec from CI logs.
+func dumpDiagnostics() {
+	for _, args := range [][]string{
+		{"get", "rediscluster,statefulset,pods", "-o", "wide"},
+		{"describe", "rediscluster", clusterName},
+		{"events", "--all-namespaces"},
+		{"-n", operatorNamespace, "logs", "deployment/" + operatorDeployment, "--tail=200"},
+	} {
+		out, err := tryKubectl(args...)
+		_, _ = fmt.Fprintf(GinkgoWriter, "\n--- kubectl %s ---\n%s\n", strings.Join(args, " "), out)
+		if err != nil {
+			_, _ = fmt.Fprintf(GinkgoWriter, "(command failed: %v)\n", err)
+		}
+	}
 }
