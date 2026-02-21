@@ -29,3 +29,8 @@ go.work
 # Kubeconfig might contain secrets
 *.kubeconfig
 
+
+# e2e measurements and badge data produced by test runs
+/e2e-metrics/
+/badge-data/
+/spec-report.json
