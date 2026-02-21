@@ -18,11 +18,13 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
+	"github.com/onsi/ginkgo/v2/types"
 	. "github.com/onsi/gomega"
 
 	"k8s.io/client-go/kubernetes/scheme"
@@ -83,6 +85,40 @@ var _ = BeforeSuite(func() {
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})
 	Expect(err).NotTo(HaveOccurred())
 	Expect(k8sClient).NotTo(BeNil())
+})
+
+// specSummary is the pass/fail count written for CI when SPEC_REPORT_FILE is set.
+type specSummary struct {
+	Passed int `json:"passed"`
+	Failed int `json:"failed"`
+	Total  int `json:"total"`
+}
+
+// Writes how many specs ran and passed, so CI can publish the number as a
+// badge instead of anyone typing it in.
+var _ = ReportAfterSuite("write spec summary", func(report Report) {
+	path := os.Getenv("SPEC_REPORT_FILE")
+	if path == "" {
+		return
+	}
+
+	var summary specSummary
+	for _, spec := range report.SpecReports {
+		if spec.LeafNodeType != types.NodeTypeIt {
+			continue
+		}
+		summary.Total++
+		switch {
+		case spec.State.Is(types.SpecStatePassed):
+			summary.Passed++
+		case spec.State.Is(types.SpecStateFailureStates):
+			summary.Failed++
+		}
+	}
+
+	data, err := json.Marshal(summary)
+	Expect(err).NotTo(HaveOccurred())
+	Expect(os.WriteFile(path, append(data, '\n'), 0o644)).To(Succeed())
 })
 
 var _ = AfterSuite(func() {
