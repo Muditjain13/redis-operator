@@ -2,14 +2,17 @@ name: Tests
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
 
 permissions: {}
 
 jobs:
   test:
     permissions:
-      contents: read
+      # write: publish measured badge data to the "badges" branch (main pushes only)
+      contents: write
     name: Run on Ubuntu
     runs-on: ubuntu-latest
     steps:
@@ -24,6 +27,24 @@ jobs:
           go-version-file: go.mod
 
       - name: Running Tests
-        run: |
-          go mod tidy
-          make test
+        env:
+          # The controller suite writes its passed/failed spec counts here.
+          SPEC_REPORT_FILE: ${{ github.workspace }}/spec-report.json
+        run: make test
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: cover.out
+          disable_search: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      - name: Build badge data
+        run: hack/make-badges.sh specs spec-report.json
+
+      - name: Publish badges
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: hack/publish-badges.sh badge-data
