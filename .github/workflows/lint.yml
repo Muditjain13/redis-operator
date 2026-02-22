@@ -2,7 +2,9 @@ name: Lint
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
 
 permissions: {}
 
@@ -27,3 +29,35 @@ jobs:
         run: make lint-config
       - name: Run linter
         run: make lint
+
+  goreport:
+    permissions:
+      # write: publish measured badge data to the "badges" branch (main pushes only)
+      contents: write
+    name: Go Report Card grade
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
+        with:
+          go-version-file: go.mod
+
+      - name: Install goreportcard-cli
+        run: |
+          hack/install-goreport.sh
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      # Fails, instead of publishing a made-up grade, if any check cannot run.
+      - name: Build badge data
+        run: hack/make-badges.sh goreport
+
+      - name: Publish badges
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: hack/publish-badges.sh badge-data
