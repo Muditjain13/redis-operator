@@ -68,9 +68,18 @@ specs() {
 
 goreport() {
   local output grade
-  output="$(goreportcard-cli -v)"
+  output="$(goreportcard-cli -v 2>&1)"
   echo "${output}"
-  grade="$(sed -nE 's/^Grade: *([A-F][+-]?).*/\1/p' <<<"${output}" | head -n1)"
+
+  # When a check cannot run (a missing linter binary) the tool still prints a
+  # grade, an F, instead of failing. Never publish that as a real result.
+  if grep -q 'ERROR' <<<"${output}"; then
+    echo "goreportcard-cli reported errors; refusing to publish a grade" >&2
+    exit 1
+  fi
+
+  # Output looks like: "Grade .......... A+ 100.0%"
+  grade="$(sed -nE 's/^Grade \.+ +([A-F][+-]?).*/\1/p' <<<"${output}" | head -n1)"
   if [[ -z "${grade}" ]]; then
     echo "could not read a grade from goreportcard-cli output" >&2
     exit 1
