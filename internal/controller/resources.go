@@ -104,7 +104,7 @@ func mutateStatefulSet(sts *appsv1.StatefulSet, rc *cachev1alpha1.RedisCluster) 
 		}}
 	}
 
-	sts.Spec.Replicas = ptr.To(rc.Spec.Replicas)
+	sts.Spec.Replicas = new(rc.Spec.Replicas)
 
 	// RollingUpdate replaces pods one at a time, highest ordinal first, and
 	// waits for each to become ready before moving on.
