@@ -31,12 +31,19 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/events"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	cachev1alpha1 "github.com/Muditjain13/redis-operator/api/v1alpha1"
+)
+
+const (
+	// upgradedVersion is the Redis version the upgrade specs move to.
+	upgradedVersion = "7.4"
+	// revision1 and revision2 stand in for StatefulSet controller revision hashes.
+	revision1 = "rev-1"
+	revision2 = "rev-2"
 )
 
 var _ = Describe("RedisCluster Controller", func() {
@@ -148,7 +155,7 @@ var _ = Describe("RedisCluster Controller", func() {
 		BeforeEach(func() {
 			rc = newCluster(func(rc *cachev1alpha1.RedisCluster) {
 				rc.Spec.Replicas = 3
-				rc.Spec.Version = "7.4"
+				rc.Spec.Version = upgradedVersion
 				rc.Spec.Storage.Size = resource.MustParse("2Gi")
 				rc.Spec.Resources = corev1.ResourceRequirements{
 					Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")},
@@ -286,7 +293,7 @@ var _ = Describe("RedisCluster Controller", func() {
 		It("reverts a StatefulSet edited behind the operator's back", func() {
 			sts := &appsv1.StatefulSet{}
 			Expect(k8sClient.Get(ctx, key, sts)).To(Succeed())
-			sts.Spec.Replicas = ptr.To(int32(6))
+			sts.Spec.Replicas = new(int32(6))
 			sts.Spec.Template.Spec.Containers[0].Image = "redis:6.0"
 			Expect(k8sClient.Update(ctx, sts)).To(Succeed())
 
@@ -346,7 +353,7 @@ var _ = Describe("RedisCluster Controller", func() {
 			markStatefulSetStatus(func(s *appsv1.StatefulSetStatus, sts *appsv1.StatefulSet) {
 				s.ObservedGeneration = sts.Generation
 				s.Replicas, s.UpdatedReplicas, s.ReadyReplicas = 2, 2, 1
-				s.CurrentRevision, s.UpdateRevision = "rev-1", "rev-1"
+				s.CurrentRevision, s.UpdateRevision = revision1, revision1
 			})
 			reconcileOnce()
 
@@ -360,7 +367,7 @@ var _ = Describe("RedisCluster Controller", func() {
 			markStatefulSetStatus(func(s *appsv1.StatefulSetStatus, sts *appsv1.StatefulSet) {
 				s.ObservedGeneration = sts.Generation
 				s.Replicas, s.UpdatedReplicas, s.ReadyReplicas = 2, 2, 2
-				s.CurrentRevision, s.UpdateRevision = "rev-1", "rev-1"
+				s.CurrentRevision, s.UpdateRevision = revision1, revision1
 			})
 			reconcileOnce()
 
@@ -415,7 +422,7 @@ var _ = Describe("RedisCluster Controller", func() {
 			sts.Status = appsv1.StatefulSetStatus{
 				ObservedGeneration: sts.Generation - 1, // stale: still describes the previous spec
 				Replicas:           2, UpdatedReplicas: 2, ReadyReplicas: 2,
-				CurrentRevision: "rev-1", UpdateRevision: "rev-1",
+				CurrentRevision: revision1, UpdateRevision: revision1,
 			}
 			Expect(rolloutComplete(rc, sts)).To(BeFalse())
 			sts.Status.ObservedGeneration = sts.Generation
@@ -427,7 +434,7 @@ var _ = Describe("RedisCluster Controller", func() {
 		BeforeEach(func() {
 			newCluster(func(rc *cachev1alpha1.RedisCluster) { rc.Spec.Replicas = 2 })
 			reconcileOnce()
-			rolloutProgress(2, 2, 2, "rev-1", "rev-1")
+			rolloutProgress(2, 2, 2, revision1, revision1)
 			reconcileOnce()
 			Expect(conditionOf(get(), cachev1alpha1.ConditionProgressing).Status).To(Equal(metav1.ConditionFalse))
 			drainEvents()
@@ -466,11 +473,11 @@ var _ = Describe("RedisCluster Controller", func() {
 			Expect(progressing.Status).To(Equal(metav1.ConditionTrue))
 			Expect(progressing.Reason).To(Equal(reasonRolloutInProgress))
 
-			rolloutProgress(3, 3, 2, "rev-1", "rev-1") // scale-up adds pods one by one
+			rolloutProgress(3, 3, 2, revision1, revision1) // scale-up adds pods one by one
 			reconcileOnce()
 			Expect(conditionOf(get(), cachev1alpha1.ConditionProgressing).Status).To(Equal(metav1.ConditionTrue))
 
-			rolloutProgress(4, 4, 4, "rev-1", "rev-1")
+			rolloutProgress(4, 4, 4, revision1, revision1)
 			reconcileOnce()
 			got := get()
 			Expect(conditionOf(got, cachev1alpha1.ConditionProgressing).Status).To(Equal(metav1.ConditionFalse))
@@ -494,7 +501,7 @@ var _ = Describe("RedisCluster Controller", func() {
 				rc.Spec.Version = "7.2"
 			})
 			reconcileOnce()
-			rolloutProgress(3, 3, 3, "rev-1", "rev-1")
+			rolloutProgress(3, 3, 3, revision1, revision1)
 			reconcileOnce()
 			Expect(get().Status.CurrentVersion).To(Equal("7.2"))
 			drainEvents()
@@ -511,7 +518,7 @@ var _ = Describe("RedisCluster Controller", func() {
 		})
 
 		It("changes the image and announces the upgrade", func() {
-			editSpec(func(s *cachev1alpha1.RedisClusterSpec) { s.Version = "7.4" })
+			editSpec(func(s *cachev1alpha1.RedisClusterSpec) { s.Version = upgradedVersion })
 			reconcileOnce()
 
 			sts := &appsv1.StatefulSet{}
@@ -521,11 +528,11 @@ var _ = Describe("RedisCluster Controller", func() {
 		})
 
 		It("stays Progressing, keeping the old currentVersion, until every pod is updated", func() {
-			editSpec(func(s *cachev1alpha1.RedisClusterSpec) { s.Version = "7.4" })
+			editSpec(func(s *cachev1alpha1.RedisClusterSpec) { s.Version = upgradedVersion })
 			reconcileOnce()
 
 			// One of three pods has been replaced; the other two are still old.
-			rolloutProgress(3, 1, 3, "rev-1", "rev-2")
+			rolloutProgress(3, 1, 3, revision1, revision2)
 			reconcileOnce()
 
 			got := get()
@@ -539,18 +546,18 @@ var _ = Describe("RedisCluster Controller", func() {
 		})
 
 		It("completes: Progressing clears, currentVersion advances and Upgraded is emitted", func() {
-			editSpec(func(s *cachev1alpha1.RedisClusterSpec) { s.Version = "7.4" })
+			editSpec(func(s *cachev1alpha1.RedisClusterSpec) { s.Version = upgradedVersion })
 			reconcileOnce()
-			rolloutProgress(3, 1, 3, "rev-1", "rev-2")
+			rolloutProgress(3, 1, 3, revision1, revision2)
 			reconcileOnce()
 			drainEvents()
 
-			rolloutProgress(3, 3, 3, "rev-2", "rev-2")
+			rolloutProgress(3, 3, 3, revision2, revision2)
 			reconcileOnce()
 
 			got := get()
 			Expect(conditionOf(got, cachev1alpha1.ConditionProgressing).Status).To(Equal(metav1.ConditionFalse))
-			Expect(got.Status.CurrentVersion).To(Equal("7.4"))
+			Expect(got.Status.CurrentVersion).To(Equal(upgradedVersion))
 			Expect(drainEvents()).To(ConsistOf("Normal Upgraded Rolling upgrade finished: all replicas run Redis 7.4"))
 		})
 	})
