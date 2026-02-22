@@ -2,14 +2,17 @@ name: E2E Tests
 
 on:
   push:
+    branches: [main]
   pull_request:
+    branches: [main]
 
 permissions: {}
 
 jobs:
   test-e2e:
     permissions:
-      contents: read
+      # write: publish measured badge data to the "badges" branch (main pushes only)
+      contents: write
     name: Run on Ubuntu
     runs-on: ubuntu-latest
     steps:
@@ -32,7 +35,16 @@ jobs:
       - name: Verify kind installation
         run: kind version
 
+      # Creates a kind cluster, deploys the operator, runs the RedisCluster
+      # lifecycle tests and writes e2e-metrics/e2e-metrics.json.
       - name: Running Test e2e
-        run: |
-          go mod tidy
-          make test-e2e
+        run: make test-e2e
+
+      - name: Build badge data
+        run: hack/make-badges.sh e2e e2e-metrics/e2e-metrics.json
+
+      - name: Publish badges
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: hack/publish-badges.sh badge-data
