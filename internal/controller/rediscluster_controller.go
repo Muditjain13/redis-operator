@@ -56,11 +56,11 @@ type RedisClusterReconciler struct {
 	Recorder events.EventRecorder
 }
 
-// +kubebuilder:rbac:groups=cache.mudit.dev,resources=redisclusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=cache.mudit.dev,resources=redisclusters,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=cache.mudit.dev,resources=redisclusters/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=cache.mudit.dev,resources=redisclusters/finalizers,verbs=update
-// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=core,resources=services;configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch
+// +kubebuilder:rbac:groups=core,resources=services;configmaps,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups=events.k8s.io,resources=events,verbs=create;patch
 
 // Reconcile drives the owned ConfigMap, headless Service and StatefulSet
