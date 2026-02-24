@@ -49,11 +49,18 @@ const (
 
 // measurements are written to disk so CI can publish them as badges. Every
 // value is measured in this run; nothing here is hardcoded.
+//
+// Both timings start at the same instant, just before the StatefulSet is
+// deleted, so they are directly comparable.
 type measurements struct {
-	KubernetesVersion string  `json:"kubernetesVersion"`
-	SelfHealSeconds   float64 `json:"selfHealSeconds"`
-	PodsUpgraded      int     `json:"podsUpgraded"`
-	PodsTotal         int     `json:"podsTotal"`
+	KubernetesVersion string `json:"kubernetesVersion"`
+	// OperatorReactionSeconds: until the operator has recreated the StatefulSet
+	// object (before any Pod is Ready).
+	OperatorReactionSeconds float64 `json:"operatorReactionSeconds"`
+	// SelfHealSeconds: until every replacement Pod is Ready ("full recovery").
+	SelfHealSeconds float64 `json:"selfHealSeconds"`
+	PodsUpgraded    int     `json:"podsUpgraded"`
+	PodsTotal       int     `json:"podsTotal"`
 }
 
 func (m measurements) write() {
@@ -118,10 +125,18 @@ var _ = Describe("RedisCluster", Ordered, func() {
 		start := time.Now()
 		kubectl("delete", "statefulset", clusterName, "--wait=true")
 
-		By("waiting for the operator to recreate it with brand-new, Ready Pods")
+		By("waiting for the operator to recreate the StatefulSet object (Pods not yet Ready)")
 		Eventually(func(g Gomega) {
 			sts, err := tryGetStatefulSet()
 			g.Expect(err).NotTo(HaveOccurred(), "StatefulSet has not been recreated yet")
+			g.Expect(sts.Metadata.UID).NotTo(Equal(originalSTS.Metadata.UID))
+		}).WithTimeout(2 * time.Minute).WithPolling(200 * time.Millisecond).Should(Succeed())
+		measured.OperatorReactionSeconds = time.Since(start).Seconds()
+
+		By("waiting for brand-new, Ready Pods")
+		Eventually(func(g Gomega) {
+			sts, err := tryGetStatefulSet()
+			g.Expect(err).NotTo(HaveOccurred(), "StatefulSet is missing")
 			g.Expect(sts.Metadata.UID).NotTo(Equal(originalSTS.Metadata.UID))
 			g.Expect(sts.Status.ReadyReplicas).To(Equal(replicas))
 
@@ -133,6 +148,10 @@ var _ = Describe("RedisCluster", Ordered, func() {
 			}
 		}).WithTimeout(6 * time.Minute).WithPolling(time.Second).Should(Succeed())
 		measured.SelfHealSeconds = time.Since(start).Seconds()
+
+		// Recreating the object is the operator's part; the rest is Kubernetes
+		// starting Pods in order, so it can never take longer than full recovery.
+		Expect(measured.OperatorReactionSeconds).To(BeNumerically("<=", measured.SelfHealSeconds))
 
 		By("checking the operator reports the cluster healthy again")
 		Eventually(func(g Gomega) {
