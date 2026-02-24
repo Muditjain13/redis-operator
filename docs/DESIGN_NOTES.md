@@ -352,10 +352,10 @@ What envtest cannot show: real Pods starting, the real rolling-update ordering, 
 `make test-e2e` creates a kind cluster, builds the operator image, loads it, installs the CRD, deploys the operator, then:
 
 1. applies `config/samples/cache_v1alpha1_rediscluster.yaml` (3 replicas, Redis 7.2) and waits for Ready 3/3 with `Available=True`, `Progressing=False`, `currentVersion=7.2`;
-2. deletes the StatefulSet (which also removes its Pods), waits for the operator to recreate it with **new** Pods (compared by UID) that are all Ready, records the elapsed time, and checks the `Recreated missing StatefulSet` event;
+2. deletes the StatefulSet (which also removes its Pods) and records **two timings from the same starting instant** (just before the delete): *operator reaction*, until a StatefulSet with a new UID exists again (polled every 200 ms, before any Pod is Ready), and *full recovery*, until the recreated StatefulSet has all-new Pods (compared by UID) that are all Ready. It asserts reaction is not longer than full recovery and checks the `Recreated missing StatefulSet` event. See [section 12.5](#125-why-full-recovery-takes-longer-than-the-operators-reaction) for why the two differ so much;
 3. patches `spec.version` to 7.4, samples ready replicas every second while Pods roll, asserts it never drops below `replicas - 1`, waits for `currentVersion=7.4` and `Progressing=False`, verifies every Pod runs `redis:7.4` and is Ready, and checks the `Upgraded` event.
 
-It also refuses to run unless the current kubectl context is `kind-<KIND_CLUSTER>` (it creates and deletes cluster-wide resources). It writes `e2e-metrics/e2e-metrics.json` (`kubernetesVersion`, `selfHealSeconds`, `podsUpgraded`, `podsTotal`), which CI turns into badges. On failure it dumps `get`, `describe`, events and operator logs. The earlier scaffolded e2e tests (cert-manager install, metrics endpoint scrape) were removed because they tested scaffolding, not this operator.
+It also refuses to run unless the current kubectl context is `kind-<KIND_CLUSTER>` (it creates and deletes cluster-wide resources). It writes `e2e-metrics/e2e-metrics.json` (`kubernetesVersion`, `operatorReactionSeconds`, `selfHealSeconds` = full recovery, `podsUpgraded`, `podsTotal`), which CI turns into badges. On failure it dumps `get`, `describe`, events and operator logs. The earlier scaffolded e2e tests (cert-manager install, metrics endpoint scrape) were removed because they tested scaffolding, not this operator.
 
 ### 11.3 Lint and static checks
 `golangci-lint` (custom build with Kubebuilder's plugin set, config in `.golangci.yml`, e2e build tag included), `go vet`, `gofmt`, and Go Report Card (graded by `goreportcard-cli`).
@@ -382,7 +382,8 @@ Actions are pinned by commit SHA with the version in a comment. Permissions defa
 
 | Badge | File on `badges` branch | Measured by | Value |
 |---|---|---|---|
-| Self-heal | `self-heal.json` | e2e test: seconds from StatefulSet deletion until the recreated StatefulSet has all-new Ready Pods | `selfHealSeconds` formatted as `N.N s` |
+| Operator reaction | `operator-reaction.json` | e2e test: seconds from StatefulSet deletion until the operator has recreated the StatefulSet **object** (a new UID exists; Pods are not yet Ready) | `operatorReactionSeconds` formatted as `N.N s`; label `operator reaction`; green up to 5 s |
+| Full recovery | `self-heal.json` | e2e test: seconds from the same instant until the recreated StatefulSet has all-new, Ready Pods | `selfHealSeconds` formatted as `N.N s`; label `full recovery (N pods)` where N is the measured Pod count; green up to 60 s |
 | Rolling upgrade | `upgrade.json` | e2e test: Pods whose image is the new tag / total Pods after the upgrade | `podsUpgraded/podsTotal pods`; green only when equal and non-zero |
 | Kubernetes | `k8s.json` | e2e test: `kubectl version` server `gitVersion` of the kind cluster | for example `v1.37.0` |
 | envtest specs | `specs.json` | envtest suite: counts of passed specs in the Ginkgo report | `N passing`, red if any fail |
@@ -402,6 +403,23 @@ Colour thresholds (for example self-heal green up to 60 s) are presentation only
 
 ### 12.4 Go Report Card gotcha (worth a sentence in the README)
 `goreportcard-cli` runs its checks through `gometalinter`, which is archived and no longer builds as a Go module. `hack/install-goreport.sh` builds the tagged release (v3.0.0) in legacy GOPATH mode, where its vendored dependencies are used. Also, when a check cannot run, `goreportcard-cli` still prints a grade of **F** instead of failing, so `make-badges.sh goreport` fails the job if the tool output contains `ERROR` rather than publishing a bogus grade. Tools are installed at `@latest`, so the grade can change when upstream linters change.
+
+### 12.5 Why full recovery takes longer than the operator's reaction
+
+The two recovery badges measure different things on purpose, and they differ by one to two orders of magnitude. README text should present the pair together, otherwise the larger number looks like a slow operator.
+
+- **Operator reaction** is the part the operator controls: the watch event for the deleted StatefulSet enqueues the owning `RedisCluster`, `Reconcile` runs, and `CreateOrUpdate` creates the object. This is a few API calls. The measured value also contains the test's own overhead (the `kubectl delete` process and a 200 ms poll that shells out to `kubectl`), so read it as an upper bound with roughly one-second resolution, not as the controller's internal latency.
+- **Full recovery** adds everything Kubernetes has to do afterwards before the cluster is back to 3/3 Ready, none of which the operator can speed up by being faster:
+  1. **Old Pods must finish terminating.** Deleting the StatefulSet cascades to its Pods through the garbage collector. A Pod name such as `X-0` cannot be reused until the old `X-0` is gone, so the new StatefulSet may have to wait for that.
+  2. **`OrderedReady` startup is strictly serial.** A StatefulSet's default pod management policy creates `X-0`, waits until it is Running **and Ready**, only then creates `X-1`, and so on. Three replicas mean three back-to-back start-then-Ready cycles, not one parallel start. This is deliberate: it is what makes an upgrade or a failure affect one Pod at a time.
+  3. **The readiness probe adds a fixed delay to every cycle.** The readiness probe is `redis-cli ping | grep -q PONG` with `initialDelaySeconds: 5` and `periodSeconds: 10`. The kubelet runs the first probe about 5 seconds after the container starts and, if Redis is not answering yet, the next one only 10 seconds later. A Pod therefore becomes Ready somewhere between roughly 5 and 15 seconds after its container starts, regardless of how quickly Redis itself started. The Pod images are already on the node, so there is no image pull in this path.
+  4. **Scheduling and container start** take a few more seconds per Pod.
+
+  Roughly: full recovery is about `reaction + old-Pod termination + 3 × (container start + readiness delay)`. In local runs on a small, memory-constrained Windows machine, operator reaction was about 2 seconds and full recovery 39 to 50 seconds depending on load, almost all of the difference being steps 2 and 3. The exact numbers depend on the machine; the CI badges are the authority.
+
+What would shorten it, and the trade-offs (all deliberately not done):
+- `podManagementPolicy: Parallel` starts and replaces Pods together. It does not change rolling-update ordering, but it gives up ordered startup, and with independent Redis instances that ordering is mostly a safety habit rather than a requirement.
+- A smaller `initialDelaySeconds` / `periodSeconds` on the readiness probe, or a `startupProbe`, makes Pods Ready sooner at the cost of more probe traffic and a higher chance of marking a slow-starting Redis unready.
 
 ## 13. Local development, quickstart and demo
 
@@ -496,6 +514,7 @@ Reasonable next steps, in rough order of value: progress deadline condition; rep
 
 - **What is the reconcile loop and why level-based?** It compares desired and actual state every time instead of reacting to deltas, so crashes, restarts and lost events converge. Every property I tested (idempotence, healing, rollout progress) follows from that.
 - **How does self-healing work?** `Owns()` registers watches on the StatefulSet, Service and ConfigMap with an owner-reference mapping. Deleting or editing a child produces an event for the owner; the reconcile re-applies the desired state with `CreateOrUpdate`. No polling.
+- **Your recovery badge says tens of seconds; is the operator slow?** No: I measure two things from the same instant. The operator recreates the StatefulSet object within a couple of seconds (the "operator reaction" badge, which includes the test's own kubectl overhead); the rest of "full recovery" is Kubernetes starting three Pods one after another (`OrderedReady`) with a readiness probe that waits at least 5 s per Pod (section 12.5).
 - **How do you avoid hot-looping?** Mutate functions only set owned fields, so a converged system issues zero writes; status is patched only if it changed; conditions keep their `lastTransitionTime` unless the status flips. Tested through unchanged `resourceVersion`.
 - **Who does the rolling upgrade?** The StatefulSet controller; the operator only sets the strategy and reports progress. I assert one-at-a-time by sampling ready replicas during the e2e upgrade.
 - **What happens if the operator dies mid-upgrade?** Nothing bad: the data plane is independent and the next reconcile recomputes status from the StatefulSet. No in-memory state to lose.
@@ -508,7 +527,7 @@ Reasonable next steps, in rough order of value: progress deadline condition; rep
 
 Everything the README needs, with where to find it here:
 
-- [ ] Title, one-line description, badges (section 12.2 URL pattern; badges: self-heal, rolling upgrade, kubernetes, envtest specs, go report, codecov, plus license)
+- [ ] Title, one-line description, badges (section 12.2 URL pattern; badges: operator reaction, full recovery (3 pods), rolling upgrade, kubernetes, envtest specs, go report, codecov, plus license; show the two recovery badges next to each other and link section 12.5's explanation)
 - [ ] What an operator is (section 4)
 - [ ] Architecture diagram (section 5.2) and short component description (5.1)
 - [ ] How reconcile works (section 7, flow diagram 5.3)
