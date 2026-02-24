@@ -2,7 +2,7 @@
 # Turn measurements taken in CI into shields.io endpoint badge files.
 #
 # Usage:
-#   hack/make-badges.sh e2e     [e2e-metrics.json]     self-heal, upgrade and k8s badges
+#   hack/make-badges.sh e2e     [e2e-metrics.json]     operator-reaction, full-recovery (self-heal), upgrade and k8s badges
 #   hack/make-badges.sh specs   [spec-report.json]     envtest spec count badge
 #   hack/make-badges.sh goreport                       Go Report Card grade badge
 #
@@ -23,22 +23,37 @@ require_number() {
 
 e2e() {
   local file="${1:-e2e-metrics/e2e-metrics.json}"
-  local heal upgraded total k8s
+  local reaction heal upgraded total k8s
+  reaction="$(jq -r '.operatorReactionSeconds // empty' "${file}")"
   heal="$(jq -r '.selfHealSeconds // empty' "${file}")"
   upgraded="$(jq -r '.podsUpgraded // empty' "${file}")"
   total="$(jq -r '.podsTotal // empty' "${file}")"
   k8s="$(jq -r '.kubernetesVersion // empty' "${file}")"
+  require_number operatorReactionSeconds "${reaction}"
   require_number selfHealSeconds "${heal}"
   require_number podsUpgraded "${upgraded}"
   require_number podsTotal "${total}"
 
+  # Time for the operator to recreate a deleted StatefulSet object.
+  local reaction_color=brightgreen
+  if awk -v s="${reaction}" 'BEGIN { exit !(s > 15) }'; then
+    reaction_color=orange
+  elif awk -v s="${reaction}" 'BEGIN { exit !(s > 5) }'; then
+    reaction_color=yellow
+  fi
+  "${badge}" operator-reaction "operator reaction" \
+    "$(awk -v s="${reaction}" 'BEGIN { printf "%.1f s", s }')" "${reaction_color}" "${out_dir}"
+
+  # Time until every replacement Pod is Ready again. The file keeps its
+  # original name, self-heal.json, so the badge URL stays stable.
   local heal_color=brightgreen
   if awk -v s="${heal}" 'BEGIN { exit !(s > 180) }'; then
     heal_color=orange
   elif awk -v s="${heal}" 'BEGIN { exit !(s > 60) }'; then
     heal_color=yellow
   fi
-  "${badge}" self-heal "self-heal" "$(awk -v s="${heal}" 'BEGIN { printf "%.1f s", s }')" "${heal_color}" "${out_dir}"
+  "${badge}" self-heal "full recovery (${total} pods)" \
+    "$(awk -v s="${heal}" 'BEGIN { printf "%.1f s", s }')" "${heal_color}" "${out_dir}"
 
   local upgrade_color=red
   if [[ "${upgraded}" -eq "${total}" && "${total}" -gt 0 ]]; then
