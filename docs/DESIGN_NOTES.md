@@ -362,7 +362,7 @@ It also refuses to run unless the current kubectl context is `kind-<KIND_CLUSTER
 
 ### 11.3b What coverage measures (Codecov)
 
-The coverage number comes from `cover.out`, written by `go test -coverprofile` over every non-e2e package during the envtest run (`make test`) and uploaded by `test.yml`. It is **statement coverage from the envtest suite only**: the e2e suite runs the operator as a container and does not contribute. Go attributes coverage to a package only when that package's *own* tests execute it, which has a visible side effect described below.
+The coverage number comes from `cover.out`, written by `go test -coverprofile` over every non-e2e package during the envtest run (`make test`) and uploaded by `test.yml`. It is **statement coverage from the envtest suite only**: the e2e suite runs the operator as a container and does not contribute. `make test` passes `-coverpkg=./...` so that code in one of this module's packages is credited when a test in a different package executes it (explained below).
 
 `codecov.yml` excludes three paths, each for a reason, and none by editing tests:
 
@@ -374,9 +374,21 @@ The coverage number comes from `cover.out`, written by `go test -coverprofile` o
 
 What stays counted, deliberately:
 - **`internal/controller`** (the reconciler, resource builders and status logic), which is where the behaviour lives.
-- **`api/v1alpha1` hand-written files.** `groupversion_info.go` and `rediscluster_types.go` contain a few executable statements (scheme registration), so by the rule "count unless there are no executable lines" they remain in the total. They show **0% even though every controller test uses them**, because Go credits coverage per package and the `api/v1alpha1` package has no tests of its own. This slightly understates real coverage and is left visible rather than hidden. Collecting cross-package coverage (`-coverpkg=./...`) would change that; it was not done so the measurement stays the plain default.
+- **`api/v1alpha1` hand-written files.** `groupversion_info.go` and `rediscluster_types.go` contain a few executable statements (scheme registration), so by the rule "count unless there are no executable lines" they remain in the total. With `-coverpkg` they are credited, because every controller test registers the scheme and uses the types.
 
-For scale, from one local profile (Go statement counts, not Codecov's line counts): 137 of 302 statements were covered with everything included, and 137 of 150 once the three paths are excluded. All of the difference is in files with no tests by design. The live number is the Codecov badge; do not copy figures from here into the README.
+#### Why `-coverpkg=./...` is used, and why it is legitimate
+
+By default `go test -coverprofile` instruments **only the package under test**. The `api/v1alpha1` package has no `_test.go` files of its own, so even though every controller test executes its scheme-registration code, that code was reported as 0% covered. The number understated reality.
+
+`-coverpkg=./...` tells the Go toolchain to instrument **all packages of this module** in every test binary, so a statement is credited if any test in the module executes it, wherever the test lives.
+
+- **What it does not change:** the tests are untouched, no test was added or loosened to move the number, and no dependency is instrumented (`./...` expands to this module's packages only, not to Kubernetes or controller-runtime). It is a measurement setting, not a behaviour change.
+- **Why it is honest here:** the question coverage answers is "which of our statements does the suite execute?". Registering the API types is genuinely executed by the suite; the default attribution was the inaccurate part.
+- **Its limit, stated plainly:** the credit is for *indirect* execution. It says the code ran during tests, not that a dedicated test asserts its behaviour. For `internal/controller` that distinction hardly matters because those packages are tested directly; for `api/v1alpha1` it is registration glue with little to assert. Do not describe the resulting percentage as "unit-tested".
+- **Profile quirk:** with `-coverpkg`, each test binary writes the same code blocks, so `cover.out` contains duplicate block lines (one per binary) with different hit counts. Tools reading it must merge them, taking any non-zero hit as covered. `go tool cover` does; naive line-summing scripts overcount statements (a local script did until it de-duplicated).
+- **Side effects:** the generated deepcopy file and `cmd/` and `test/` are instrumented too, but they are excluded in `codecov.yml`, so they do not affect the reported total. The package-level percentage printed by `go test` (for example "coverage: 53.6% of statements in ./...") includes them and is **not** the number Codecov reports.
+
+For scale, from one local profile after de-duplication (Go statement counts, not Codecov's line counts): 162 of 302 statements were covered with everything included, and 142 of 150 once the three excluded paths are removed. Before `-coverpkg` the same measurement gave 137 of 150, the difference being the `api/v1alpha1` registration code. The live number is the Codecov badge; do not copy figures from here into the README.
 
 ### 11.4 Why both envtest and e2e
 envtest is fast and gives total control of the StatefulSet status, so it can test every branch and failure injection. e2e proves the real integration (RBAC actually sufficient, real Pods, real rolling update, real garbage collection). Neither replaces the other. The CI badges deliberately come from the layer that can honestly measure the claim: spec count from envtest; self-heal time, upgrade completion and Kubernetes version from e2e.
