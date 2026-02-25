@@ -54,6 +54,11 @@ linters:
           - dupl
           - lll
         path: internal/*
+      # Table-driven tests repeat the same literals on purpose; hoisting each
+      # one into a constant makes the cases harder to read.
+      - linters:
+          - goconst
+        path: _test\.go
     paths:
       - third_party$
       - builtin$
