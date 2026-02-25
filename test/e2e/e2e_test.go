@@ -49,15 +49,15 @@ const (
 
 // measurements are written to disk so CI can publish them as badges. Every
 // value is measured in this run; nothing here is hardcoded.
-//
-// Both timings start at the same instant, just before the StatefulSet is
-// deleted, so they are directly comparable.
 type measurements struct {
 	KubernetesVersion string `json:"kubernetesVersion"`
-	// OperatorReactionSeconds: until the operator has recreated the StatefulSet
-	// object (before any Pod is Ready).
+	// OperatorReactionSeconds: from the moment `kubectl delete` returns (the old
+	// StatefulSet is gone) until the operator has recreated the StatefulSet
+	// object, before any Pod is Ready. Each poll is a separate kubectl process,
+	// so this includes polling overhead and is an upper bound.
 	OperatorReactionSeconds float64 `json:"operatorReactionSeconds"`
-	// SelfHealSeconds: until every replacement Pod is Ready ("full recovery").
+	// SelfHealSeconds: from just before the delete until every replacement Pod
+	// is Ready ("full recovery").
 	SelfHealSeconds float64 `json:"selfHealSeconds"`
 	PodsUpgraded    int     `json:"podsUpgraded"`
 	PodsTotal       int     `json:"podsTotal"`
@@ -124,6 +124,9 @@ var _ = Describe("RedisCluster", Ordered, func() {
 		By("deleting the StatefulSet, which also removes its Pods")
 		start := time.Now()
 		kubectl("delete", "statefulset", clusterName, "--wait=true")
+		// The old StatefulSet is gone now. The operator's reaction is timed from
+		// here so it does not include kubectl's own time to finish the deletion.
+		deleted := time.Now()
 
 		By("waiting for the operator to recreate the StatefulSet object (Pods not yet Ready)")
 		Eventually(func(g Gomega) {
@@ -131,7 +134,7 @@ var _ = Describe("RedisCluster", Ordered, func() {
 			g.Expect(err).NotTo(HaveOccurred(), "StatefulSet has not been recreated yet")
 			g.Expect(sts.Metadata.UID).NotTo(Equal(originalSTS.Metadata.UID))
 		}).WithTimeout(2 * time.Minute).WithPolling(200 * time.Millisecond).Should(Succeed())
-		measured.OperatorReactionSeconds = time.Since(start).Seconds()
+		measured.OperatorReactionSeconds = time.Since(deleted).Seconds()
 
 		By("waiting for brand-new, Ready Pods")
 		Eventually(func(g Gomega) {
