@@ -34,3 +34,9 @@ go.work
 /e2e-metrics/
 /badge-data/
 /spec-report.json
+
+# Web UI: dependencies, and the build output that is copied into the Go embed directory
+/web/node_modules/
+/web/dist/
+/internal/dashboard/ui/dist/*
+!/internal/dashboard/ui/dist/.gitkeep

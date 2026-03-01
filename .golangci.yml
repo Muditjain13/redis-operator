@@ -63,6 +63,8 @@ linters:
       - third_party$
       - builtin$
       - examples$
+      # The web UI is JavaScript; its installed packages must not be linted as Go.
+      - ^web/
 formatters:
   enable:
     - gofmt
