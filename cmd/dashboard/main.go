@@ -21,9 +21,9 @@ import (
 	"os"
 
 	"github.com/Muditjain13/redis-operator/internal/dashboard"
+	"github.com/Muditjain13/redis-operator/internal/dashboard/ui"
 )
 
 func main() {
-	// The web UI is embedded in a later change; until then only the API is served.
-	os.Exit(dashboard.Main(os.Args[1:], nil, os.Stdout, os.Stderr))
+	os.Exit(dashboard.Main(os.Args[1:], ui.FS(), os.Stdout, os.Stderr))
 }
