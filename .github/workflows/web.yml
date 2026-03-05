@@ -44,3 +44,30 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # Builds the real portal image (Node build stage, Go build with the UI
+  # embedded, distroless runtime) so a broken Dockerfile.portal is caught here.
+  image:
+    permissions:
+      contents: read
+    name: Build the portal image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Build image
+        run: docker build -f Dockerfile.portal -t redis-portal:ci .
+
+      # --help exits with status 2 after printing the flags; that proves the
+      # static binary starts in the distroless image as the non-root user.
+      - name: Check the binary starts
+        run: |
+          set +e
+          out=$(docker run --rm redis-portal:ci --help 2>&1)
+          code=$?
+          echo "$out"
+          test "$code" -eq 2
+          echo "$out" | grep -q -- '-namespace'
