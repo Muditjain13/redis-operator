@@ -1,0 +1,15 @@
+# Used instead of .dockerignore when building Dockerfile.portal (BuildKit).
+# The operator's .dockerignore only lets Go files in; the portal also needs web/.
+**
+
+# Go source (not tests) and module files
+!**/*.go
+**/*_test.go
+!go.mod
+!go.sum
+
+# The web UI sources, but never installed packages or previous builds
+!web/
+!web/**
+**/node_modules
+web/dist

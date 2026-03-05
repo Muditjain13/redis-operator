@@ -1,0 +1,31 @@
+# Builds the demo portal: the React UI and the Go server in one image.
+# Override NODE_IMAGE / BASE_IMAGE to build from another registry.
+ARG NODE_IMAGE=node:24
+ARG BASE_IMAGE=golang:1.26
+
+# Stage 1: build the web UI.
+FROM ${NODE_IMAGE} AS web
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+# Stage 2: build the Go binary with the UI embedded.
+FROM ${BASE_IMAGE} AS builder
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /workspace
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+COPY --from=web /web/dist/ internal/dashboard/ui/dist/
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} go build -o dashboard ./cmd/dashboard
+
+# Stage 3: a minimal image with only the binary.
+FROM gcr.io/distroless/static:nonroot
+WORKDIR /
+COPY --from=builder /workspace/dashboard .
+USER 65532:65532
+EXPOSE 8080
+ENTRYPOINT ["/dashboard"]

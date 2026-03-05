@@ -134,6 +134,33 @@ kind-down: ## Delete the local kind cluster
 demo: ## Run the self-healing demo against the local kind cluster
 	bash hack/demo.sh
 
+##@ Portal (web UI + dashboard backend)
+
+PORTAL_IMG ?= redis-portal:dev
+WEB_DIST := internal/dashboard/ui/dist
+
+.PHONY: web-build
+web-build: ## Build the web UI and copy it where the Go binary embeds it.
+	cd web && npm ci && npm run build
+	$(MAKE) web-embed
+
+.PHONY: web-embed
+web-embed: ## Copy an already built web/dist into the directory the Go binary embeds.
+	find $(WEB_DIST) -mindepth 1 ! -name .gitkeep -delete
+	cp -r web/dist/. $(WEB_DIST)/
+
+.PHONY: web-check
+web-check: ## Lint, type-check and test the web UI.
+	cd web && npm ci && npm run lint && npm run typecheck && npm test
+
+.PHONY: portal-run
+portal-run: web-build ## Run the portal locally against the current kubeconfig context.
+	go run ./cmd/dashboard --namespace default
+
+.PHONY: docker-build-portal
+docker-build-portal: ## Build the portal image (web UI and backend in one).
+	$(CONTAINER_TOOL) build -f Dockerfile.portal -t ${PORTAL_IMG} .
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run
