@@ -1,0 +1,78 @@
+# The portal's identity. Everything is scoped to the demo namespace with a
+# Role, never a ClusterRole, and lists only what the portal's buttons and
+# live view use. internal/dashboard/manifests_test.go pins these rules, so
+# widening them fails the tests.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: redis-portal
+  namespace: demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: redis-portal
+  namespace: demo
+rules:
+  # Read the cluster and change replicas and version (scale and upgrade buttons).
+  - apiGroups: ["cache.mudit.dev"]
+    resources: ["redisclusters"]
+    verbs: ["get", "patch"]
+  # Show Pods live, and the "kill a random Pod" button.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list", "watch", "delete"]
+  # Look up the StatefulSet UID, and the "delete StatefulSet" button.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "delete"]
+  # The operator's events feed.
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: redis-portal
+  namespace: demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: redis-portal
+subjects:
+  - kind: ServiceAccount
+    name: redis-portal
+    namespace: demo
+---
+# The reset CronJob gets its own, smaller identity: it can only read and patch
+# the RedisCluster.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: redis-portal-reset
+  namespace: demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: redis-portal-reset
+  namespace: demo
+rules:
+  - apiGroups: ["cache.mudit.dev"]
+    resources: ["redisclusters"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: redis-portal-reset
+  namespace: demo
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: redis-portal-reset
+subjects:
+  - kind: ServiceAccount
+    name: redis-portal-reset
+    namespace: demo
