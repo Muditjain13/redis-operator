@@ -243,6 +243,29 @@ func (b *KubeBackend) patchSpec(ctx context.Context, change func(*cachev1alpha1.
 	return nil
 }
 
+// ResetSpec puts replicas and version back to the given values with one merge
+// patch. It reports whether anything had to change. It touches nothing but the
+// RedisCluster, so the CronJob that calls it needs no other permission.
+func (b *KubeBackend) ResetSpec(ctx context.Context, replicas int32, version string) (bool, error) {
+	rc := &cachev1alpha1.RedisCluster{}
+	if err := b.CR.Get(ctx, b.key(), rc); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, ErrClusterNotFound
+		}
+		return false, fmt.Errorf("getting RedisCluster: %w", err)
+	}
+	if rc.Spec.Replicas == replicas && rc.Spec.Version == version {
+		return false, nil
+	}
+	orig := rc.DeepCopy()
+	rc.Spec.Replicas = replicas
+	rc.Spec.Version = version
+	if err := b.CR.Patch(ctx, rc, client.MergeFrom(orig)); err != nil {
+		return false, fmt.Errorf("patching RedisCluster: %w", err)
+	}
+	return true, nil
+}
+
 // isOurs reports whether the event is about this RedisCluster.
 func (b *KubeBackend) isOurs(e *eventsv1.Event) bool {
 	return e.Regarding.Kind == "RedisCluster" && e.Regarding.Name == b.Cluster

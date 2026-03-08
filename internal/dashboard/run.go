@@ -36,6 +36,9 @@ import (
 // all the logic lives in a package that is tested and counted for coverage.
 // It returns the process exit code.
 func Main(args []string, static fs.FS, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "reset" {
+		return resetMain(args[1:], stdout, stderr)
+	}
 	fl := flag.NewFlagSet("dashboard", flag.ContinueOnError)
 	fl.SetOutput(stderr)
 
