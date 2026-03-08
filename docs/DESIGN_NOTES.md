@@ -597,3 +597,37 @@ The web UI (`web/`) follows one rule for every npm package, direct or transitive
 - *When to remove it:* once the version npm resolves for `css-tree` and `postcss` is 1.2.2 or newer without help, delete the `overrides` block. Until then it must stay, or the vulnerable 1.2.1 returns.
 
 Any future exception should be recorded here in the same form: what, why, why acceptable, and when to remove it.
+
+## 19. Troubleshooting: intermittent Docker pull failures on Windows
+
+Observed on the Windows 11 development machine with Docker Desktop 4.95 (WSL2 backend). It is a local problem and does not affect CI.
+
+**Symptom.** Roughly 5 to 15 percent of `docker pull` calls against Docker Hub fail. The error is either `failed to authorize: failed to fetch anonymous token` or `Head "https://registry-1.docker.io/v2/...": http: server gave HTTP response to HTTPS client`. A retry normally succeeds. The same error shows up for images unrelated to this project and on both `registry-1.docker.io` and `auth.docker.io`.
+
+**Measurements** (20 forced pulls of `hello-world`, judged by exit code):
+
+| Condition | Pulls failed |
+|---|---|
+| Baseline (dual-stack networking, Quick Heal web protection on) | 3 of 20 |
+| Docker `DefaultNetworkingMode` set to `ipv4only` | 2 of 20 (plus 1 of 15 in a follow-up run) |
+| `ipv4only` and Quick Heal web protection paused | 3 of 20 |
+
+**Ruled out**
+- **Rate limiting.** The anonymous Docker Hub limit was 98 of 100 remaining when checked, and the error is a transport error, not HTTP 429.
+- **IPv6 at every layer I could measure.**
+  - The host has no IPv6 route. Direct `curl` to the registry succeeded 40 of 40 times by default and 40 of 40 with `-4`, with the slowest request under one second, so the doomed IPv6 attempt costs nothing measurable.
+  - The Docker Desktop VM has only a link-local IPv6 address and no IPv6 default route. A connect to a registry IPv6 address fails in 0 ms with "Network unreachable", and IPv4 then connects in 0 ms.
+  - Container DNS returned no AAAA records in 0 of 20 lookups in the later runs, so the earlier IPv6 answers were intermittent and are not needed for a failure to happen.
+  - Switching Docker Desktop to IPv4-only networking did not change the failure rate.
+- **Quick Heal web protection.** Pausing it left the failure rate unchanged (3 of 20 before, 3 of 20 after) and the proxy test clean in both states.
+- **A Docker Desktop restart.** It did not clear the failures.
+- **A plain proxy tunnel.** 280 `CONNECT` requests through Docker Desktop's built-in proxy (`http.docker.internal:3128`), which the daemon uses, produced one empty reply in the first 140 and none in the second 140.
+
+**Not established.** The root cause. The failing step is after the tunnel opens, when the daemon's first HTTPS request on a new connection receives plain HTTP back. The likely area is Docker Desktop's built-in proxy or Docker Hub's anonymous registry and token endpoints under repeated requests, but neither is proven.
+
+**Practical workaround** (no permanent local fix found)
+- Retry a failed pull. Failures are independent, so a retry or two is enough.
+- Pre-pull base images while the network is cooperating: `node:24`, `golang:1.26` and `gcr.io/distroless/static`. Cached images do not touch the registry.
+- Rely on CI for image builds. GitHub runners do not show this behaviour.
+
+**Setting applied, kept because it is harmless.** `"DefaultNetworkingMode": "ipv4only"` in `%APPDATA%\Docker\settings-store.json` (Settings > Resources > Network > Default networking mode). The host has no IPv6, so nothing is lost. To undo it, set the dropdown back to "Dual IPv4/IPv6", or remove the key from the file and run `docker desktop restart`.
