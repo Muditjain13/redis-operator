@@ -1,0 +1,21 @@
+# The cluster the portal shows. The portal's buttons and the reset CronJob
+# change spec.replicas and spec.version; everything else stays as written here.
+apiVersion: cache.mudit.dev/v1alpha1
+kind: RedisCluster
+metadata:
+  name: rediscluster-sample
+  namespace: demo
+  labels:
+    app.kubernetes.io/part-of: redis-operator-demo
+spec:
+  replicas: 3
+  version: "7.2"
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
+  storage:
+    size: 1Gi
