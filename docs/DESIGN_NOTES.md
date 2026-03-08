@@ -21,6 +21,7 @@ Contents
 15. [Known limitations and future work](#15-known-limitations-and-future-work)
 16. [Interview talking points](#16-interview-talking-points)
 17. [README checklist](#17-readme-checklist)
+18. [Web UI dependency policy](#18-web-ui-dependency-policy)
 
 ---
 
@@ -572,3 +573,27 @@ Everything the README needs, with where to find it here:
 - [ ] Contributing / development notes (section 13.5, only if wanted)
 - [ ] License: Apache 2.0
 - [ ] Do **not** type measured numbers into prose; link badges. If a number must appear, state that it is measured by CI.
+
+## 18. Web UI dependency policy
+
+The web UI (`web/`) follows one rule for every npm package, direct or transitive, and has one documented exception.
+
+**The rule**
+- Use stable releases that have been published for **at least 28 days**.
+- Use only versions the surrounding tools officially support, judged from each package's declared `peerDependencies` and `engines`, not from "it installs". If a brand-new major is not fully supported yet, use the previous major.
+- Pin **exact** versions in `web/package.json` (no `^` or `~`; `web/.npmrc` sets `save-exact=true`), and commit `web/package-lock.json`. CI installs with `npm ci`, so it gets precisely the locked tree.
+- The tree was resolved with `npm install --before=<date 28 days earlier>`, which applies the same age limit to transitive packages.
+
+**Where the rule chose an older major** (reasons verified in the registry at the time):
+- `typescript` stays on 6.0.x: TypeScript 7 exists, but `typescript-eslint` declares support only for versions below 6.1.
+- `jsdom` is 29.x, not 30: jsdom 30 needs Node 24.15 or newer, which is not what the development machine runs, so it was not officially supported there.
+- `vitest` is 4.x, not 5: a judgement call. Vitest 5 was about six weeks old and still shipping patches every few days; 4.1.x is the mature final release of the previous major and declares support for Vite 8. The suite also passed on Vitest 5, so moving up later is low risk.
+
+**The exception: security patches from the original maintainer**
+`source-map-js` is pinned to **1.2.2** through an `overrides` entry in `web/package.json`, although 1.2.2 was released fewer than 28 days before it was adopted.
+- *Why:* `source-map-js` 1.0.0 to 1.2.1 allows an event-loop denial of service through indexed source-map section offsets (GHSA-68fv-2mgg-jv7q); 1.2.2 is the first patched release. `npm audit` flagged the older version as high severity.
+- *Why it is acceptable:* it is a security fix, published by the same sole maintainer and from the same repository as 1.2.1 (`7rulnik/source-map-js`, same licence), and the advisory itself points at that repository. The package is only reached through `jsdom` (via `css-tree`) and `vite` (via `postcss`), so it affects building and testing, not what browsers receive.
+- *Scope of the change:* exactly one package changed in the lockfile (1.2.1 to 1.2.2); nothing else was re-resolved.
+- *When to remove it:* once the version npm resolves for `css-tree` and `postcss` is 1.2.2 or newer without help, delete the `overrides` block. Until then it must stay, or the vulnerable 1.2.1 returns.
+
+Any future exception should be recorded here in the same form: what, why, why acceptable, and when to remove it.
