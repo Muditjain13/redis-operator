@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-portal
+  namespace: demo
+  labels:
+    app.kubernetes.io/name: redis-portal
+spec:
+  selector:
+    app.kubernetes.io/name: redis-portal
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
