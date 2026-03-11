@@ -161,6 +161,20 @@ portal-run: web-build ## Run the portal locally against the current kubeconfig c
 docker-build-portal: ## Build the portal image (web UI and backend in one).
 	$(CONTAINER_TOOL) build -f Dockerfile.portal -t ${PORTAL_IMG} .
 
+.PHONY: portal-deploy
+portal-deploy: docker-build-portal ## Build the portal image, load it into the kind cluster and deploy it with the demo RedisCluster (the operator must already be running).
+	$(KIND) load docker-image ${PORTAL_IMG} --name $(DEV_CLUSTER)
+	$(KUBECTL) apply -k deploy/demo
+	$(KUBECTL) apply -k deploy/portal
+	$(KUBECTL) -n demo rollout restart deployment/redis-portal
+	$(KUBECTL) -n demo rollout status deployment/redis-portal --timeout=120s
+	@echo "Open the portal with: $(KUBECTL) -n demo port-forward svc/redis-portal 8080:80"
+
+.PHONY: portal-undeploy
+portal-undeploy: ## Remove the portal and the demo namespace from the cluster.
+	-$(KUBECTL) delete -k deploy/portal
+	-$(KUBECTL) delete -k deploy/demo
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run
