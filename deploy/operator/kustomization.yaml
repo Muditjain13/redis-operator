@@ -1,0 +1,14 @@
+# The operator as Argo CD (or `kubectl apply -k`) deploys it: the CRD, RBAC and
+# the manager from config/default, with the image pointed at a real name.
+# `redis-operator:dev` is the image `make argocd-up` builds and loads into kind;
+# a hosted install changes newName and newTag to a published image.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../config/default
+
+images:
+  - name: controller
+    newName: redis-operator
+    newTag: dev
