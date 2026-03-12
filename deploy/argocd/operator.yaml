@@ -1,0 +1,32 @@
+# The operator: CRD, RBAC and manager, from deploy/operator in this repo.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: redis-operator
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Muditjain13/redis-operator.git
+    targetRevision: main
+    path: deploy/operator
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: redis-operator-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # Applies the CRD server side, which avoids the size limit on the
+      # last-applied annotation.
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

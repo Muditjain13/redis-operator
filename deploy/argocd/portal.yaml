@@ -1,0 +1,44 @@
+# The portal and the demo RedisCluster it shows, from deploy/portal in this repo.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: redis-portal
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Muditjain13/redis-operator.git
+    targetRevision: main
+    path: deploy/portal
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: demo
+  # The portal's buttons and the reset CronJob change these two fields on
+  # purpose. Argo CD must not undo them: the operator reacts to them, and the
+  # CronJob is what puts them back. Everything else in the RedisCluster, and
+  # every other resource, is still held to what is in git.
+  ignoreDifferences:
+    - group: cache.mudit.dev
+      kind: RedisCluster
+      name: rediscluster-sample
+      jsonPointers:
+        - /spec/replicas
+        - /spec/version
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # Without this, a sync would still write the ignored fields back.
+      - RespectIgnoreDifferences=true
+      # The RedisCluster type comes from the operator Application, which may
+      # not have finished when this one first syncs.
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
