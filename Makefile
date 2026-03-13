@@ -173,6 +173,41 @@ portal-deploy: docker-build-portal ## Build the portal image, load it into the k
 portal-undeploy: ## Remove the portal and the demo namespace from the cluster.
 	-$(KUBECTL) delete -k deploy/portal
 
+##@ GitOps (Argo CD)
+
+ARGOCD_VERSION ?= v3.5.3
+# core-install.yaml has no UI, API server or login, which keeps it small enough
+# for a laptop. Use ARGOCD_INSTALL=install.yaml for the full install.
+ARGOCD_INSTALL ?= core-install.yaml
+ARGOCD_URL ?= https://raw.githubusercontent.com/argoproj/argo-cd/$(ARGOCD_VERSION)/manifests/$(ARGOCD_INSTALL)
+ARGOCD_REPO_URL ?= https://github.com/Muditjain13/redis-operator.git
+
+.PHONY: argocd-images
+argocd-images: kind-up ## Build the operator and portal images and load them into the kind cluster.
+	$(MAKE) docker-build IMG=$(DEV_IMG)
+	$(MAKE) docker-build-portal
+	$(KIND) load docker-image $(DEV_IMG) --name $(DEV_CLUSTER)
+	$(KIND) load docker-image ${PORTAL_IMG} --name $(DEV_CLUSTER)
+
+.PHONY: argocd-up
+argocd-up: argocd-images ## Install Argo CD on the kind cluster and apply the Applications. A private repo needs ARGOCD_REPO_TOKEN (see docs/argocd.md).
+	$(KUBECTL) create namespace argocd --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	$(KUBECTL) apply -n argocd --server-side --force-conflicts -f $(ARGOCD_URL)
+	$(KUBECTL) -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
+	$(KUBECTL) -n argocd rollout status deployment/argocd-repo-server --timeout=300s
+	@if [ -n "$$ARGOCD_REPO_TOKEN" ]; then \
+		echo "Giving Argo CD read access to $(ARGOCD_REPO_URL)"; \
+		printf 'apiVersion: v1\nkind: Secret\nmetadata:\n  name: repo-redis-operator\n  namespace: argocd\n  labels:\n    argocd.argoproj.io/secret-type: repository\nstringData:\n  type: git\n  url: %s\n  username: git\n  password: "%s"\n' "$(ARGOCD_REPO_URL)" "$$ARGOCD_REPO_TOKEN" | $(KUBECTL) apply -f -; \
+	else \
+		echo "ARGOCD_REPO_TOKEN is not set. That is fine for a public repository; a private one needs it (docs/argocd.md)."; \
+	fi
+	$(KUBECTL) apply -f deploy/argocd/
+	@echo "Watch the sync with: $(KUBECTL) -n argocd get applications -w"
+
+.PHONY: argocd-demo
+argocd-demo: ## Show Argo CD reverting a manual change (run after argocd-up has synced).
+	bash hack/argocd-demo.sh
+
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
 	"$(GOLANGCI_LINT)" run
