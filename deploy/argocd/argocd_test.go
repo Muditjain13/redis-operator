@@ -89,11 +89,7 @@ func load(t *testing.T, file string) app {
 }
 
 func TestEveryApplicationFollowsTheSamePolicy(t *testing.T) {
-	files, err := filepath.Glob("*.yaml")
-	if err != nil || len(files) != 2 {
-		t.Fatalf("found %v (%v), want exactly operator.yaml and portal.yaml", files, err)
-	}
-	for _, f := range files {
+	for _, f := range []string{"operator.yaml", "portal.yaml"} {
 		a := load(t, f)
 		if a.APIVersion != "argoproj.io/v1alpha1" || a.Kind != "Application" {
 			t.Errorf("%s is a %s %s", f, a.APIVersion, a.Kind)
@@ -160,6 +156,33 @@ func TestPortalApplicationLeavesTheButtonFieldsAlone(t *testing.T) {
 	for _, opt := range []string{"RespectIgnoreDifferences=true", "SkipDryRunOnMissingResource=true"} {
 		if !slices.Contains(a.Spec.SyncPolicy.SyncOptions, opt) {
 			t.Errorf("syncOptions lack %s", opt)
+		}
+	}
+}
+
+// Every Application names project "default", so that project has to exist even
+// on a core install, which has no API server to create it.
+func TestDefaultProjectIsDefined(t *testing.T) {
+	data, err := os.ReadFile("appproject.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p struct {
+		Kind     string `json:"kind"`
+		Metadata struct {
+			Name      string `json:"name"`
+			Namespace string `json:"namespace"`
+		} `json:"metadata"`
+	}
+	if err := yaml.Unmarshal(data, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.Kind != "AppProject" || p.Metadata.Name != "default" || p.Metadata.Namespace != "argocd" {
+		t.Fatalf("appproject.yaml defines %s %s/%s", p.Kind, p.Metadata.Namespace, p.Metadata.Name)
+	}
+	for _, f := range []string{"operator.yaml", "portal.yaml"} {
+		if got := load(t, f).Spec.Project; got != p.Metadata.Name {
+			t.Errorf("%s uses project %q, want %q", f, got, p.Metadata.Name)
 		}
 	}
 }

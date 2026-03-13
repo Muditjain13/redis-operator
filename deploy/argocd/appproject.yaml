@@ -1,0 +1,19 @@
+# Argo CD's built-in "default" project, spelled out. A full install creates it
+# when the API server starts; core-install.yaml has no API server, so without
+# this file the Applications fail with "project default which does not exist".
+# The spec is the same permissive one Argo CD creates, so applying it to a full
+# install changes nothing.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: default
+  namespace: argocd
+spec:
+  sourceRepos:
+    - "*"
+  destinations:
+    - namespace: "*"
+      server: "*"
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
