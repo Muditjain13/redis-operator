@@ -1,0 +1,12 @@
+# The operator on the hosted k3s VM. Same as deploy/operator; only the image
+# tag differs. `hack/hosted-images.sh` builds redis-operator:hosted on the VM and
+# imports it into k3s, so no registry is involved.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../operator
+
+images:
+  - name: redis-operator
+    newTag: hosted
