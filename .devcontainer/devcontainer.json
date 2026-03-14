@@ -1,10 +1,13 @@
 {
-  "name": "Kubebuilder DevContainer",
+  "name": "Redis operator",
   "image": "golang:1.26",
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {
       "moby": false,
       "dockerDefaultAddressPool": "base=172.30.0.0/16,size=24"
+    },
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24"
     },
     "ghcr.io/devcontainers/features/git:1": {},
     "ghcr.io/devcontainers/features/common-utils:2": {
@@ -12,7 +15,22 @@
     }
   },
 
+  // kind runs a whole Kubernetes node inside Docker, and the e2e tests start
+  // the operator on top of that. Two cores is not enough; four gives 16 GB.
+  "hostRequirements": {
+    "cpus": 4,
+    "memory": "16gb"
+  },
+
   "runArgs": ["--privileged", "--init"],
+
+  "forwardPorts": [8080],
+  "portsAttributes": {
+    "8080": {
+      "label": "Portal (make portal-run)",
+      "onAutoForward": "notify"
+    }
+  },
 
   "customizations": {
     "vscode": {
@@ -20,6 +38,8 @@
         "terminal.integrated.shell.linux": "/bin/bash"
       },
       "extensions": [
+        "golang.go",
+        "dbaeumer.vscode-eslint",
         "ms-kubernetes-tools.vscode-kubernetes-tools",
         "ms-azuretools.vscode-docker"
       ]
@@ -30,6 +50,6 @@
     "GO111MODULE": "on"
   },
 
-  "onCreateCommand": "bash .devcontainer/post-install.sh"
+  "onCreateCommand": "bash .devcontainer/post-install.sh",
+  "postCreateCommand": "go mod download && npm ci --prefix web"
 }
-

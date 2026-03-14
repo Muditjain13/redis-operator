@@ -47,11 +47,43 @@ echo "------------------------------------"
 echo "Installing development tools..."
 echo "------------------------------------"
 
+# Tool versions are pinned to what CI and local development use, and every
+# download is checked against a SHA-256 taken from the project's own release.
+KIND_VERSION="v0.33.0"
+KUBECTL_VERSION="v1.37.0"
+KUBEBUILDER_VERSION="v4.16.0"
+
+case "${ARCH}" in
+  amd64)
+    KIND_SHA256="aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d"
+    KUBECTL_SHA256="6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f"
+    KUBEBUILDER_SHA256="539984e58832044f2326b1bb940c1eaf784f1849e65d06d3a4a4a8b5dfac7ca7"
+    ;;
+  arm64)
+    KIND_SHA256="20022bee6cfcd5086cb7234d218e3454e6090022f2a8f55d1fa7fcf42c3867a2"
+    KUBECTL_SHA256="922df28df248cc00a9e025f947704f1d1482de64ece54cfe57e61f19eaf1eef3"
+    KUBEBUILDER_SHA256="6833432c8faab62d2ca6b583f32c88b0a3d1b7264562739c202084c996a55845"
+    ;;
+esac
+
+# install_verified <name> <url> <sha256>: download, verify, then install.
+install_verified() {
+  local name=$1 url=$2 sha=$3 tmp
+  tmp=$(mktemp)
+  curl -fsSL --retry 3 -o "${tmp}" "${url}"
+  if ! echo "${sha}  ${tmp}" | sha256sum -c - >/dev/null 2>&1; then
+    echo "ERROR: checksum mismatch for ${name} from ${url}"
+    rm -f "${tmp}"
+    exit 1
+  fi
+  install -m 0755 "${tmp}" "/usr/local/bin/${name}"
+  rm -f "${tmp}"
+}
+
 # Install kind
 if ! command -v kind &> /dev/null; then
-  echo "Installing kind..."
-  curl -Lo /usr/local/bin/kind "https://kind.sigs.k8s.io/dl/latest/kind-linux-${ARCH}"
-  chmod +x /usr/local/bin/kind
+  echo "Installing kind ${KIND_VERSION}..."
+  install_verified kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-${ARCH}" "${KIND_SHA256}"
   echo "kind installed successfully"
 fi
 
@@ -66,9 +98,8 @@ fi
 
 # Install kubebuilder
 if ! command -v kubebuilder &> /dev/null; then
-  echo "Installing kubebuilder..."
-  curl -Lo /usr/local/bin/kubebuilder "https://go.kubebuilder.io/dl/latest/linux/${ARCH}"
-  chmod +x /usr/local/bin/kubebuilder
+  echo "Installing kubebuilder ${KUBEBUILDER_VERSION}..."
+  install_verified kubebuilder "https://github.com/kubernetes-sigs/kubebuilder/releases/download/${KUBEBUILDER_VERSION}/kubebuilder_linux_${ARCH}" "${KUBEBUILDER_SHA256}"
   echo "kubebuilder installed successfully"
 fi
 
@@ -83,10 +114,8 @@ fi
 
 # Install kubectl
 if ! command -v kubectl &> /dev/null; then
-  echo "Installing kubectl..."
-  KUBECTL_VERSION=$(curl -Ls https://dl.k8s.io/release/stable.txt)
-  curl -Lo /usr/local/bin/kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"
-  chmod +x /usr/local/bin/kubectl
+  echo "Installing kubectl ${KUBECTL_VERSION}..."
+  install_verified kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl" "${KUBECTL_SHA256}"
   echo "kubectl installed successfully"
 fi
 
@@ -144,6 +173,8 @@ kubebuilder version
 kubectl version --client
 docker --version
 go version
+node --version
+npm --version
 
 echo ""
 echo "===================================="
