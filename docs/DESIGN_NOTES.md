@@ -631,3 +631,60 @@ Observed on the Windows 11 development machine with Docker Desktop 4.95 (WSL2 ba
 - Rely on CI for image builds. GitHub runners do not show this behaviour.
 
 **Setting applied, kept because it is harmless.** `"DefaultNetworkingMode": "ipv4only"` in `%APPDATA%\Docker\settings-store.json` (Settings > Resources > Network > Default networking mode). The host has no IPv6, so nothing is lost. To undo it, set the dropdown back to "Dual IPv4/IPv6", or remove the key from the file and run `docker desktop restart`.
+
+**Related symptom.** `go mod download` inside `docker build` sometimes fails with `remote error: tls: protocol version not supported` from `proxy.golang.org`. A retry succeeds, so the same workaround applies.
+
+## 20. Platform portal
+
+A live demo page for the operator. It shows the RedisCluster's Pods and the operator's events as they change, lets a visitor break things with five buttons, and reports how many seconds each recovery took. Hosting is covered in a later section once it exists.
+
+**What it is**
+- **One container.** A Go server (`internal/dashboard`, started by a thin `cmd/dashboard`) serves a React and TypeScript UI (`web/`, built with Vite) that is embedded into the binary with `go:embed`. The image is `Dockerfile.portal`: a Node stage builds the UI, a Go stage builds the binary, and a distroless nonroot image runs it.
+- **Live view.** The server watches Pods and events with client-go, refreshes every 2 seconds, and pushes a snapshot to browsers over Server-Sent Events, only when something changed. At most 100 streams are open at once, and a slow client is dropped instead of slowing the others.
+- **Five fixed actions.** Kill a random Pod, delete the StatefulSet, scale to 5, scale back to 3, upgrade to 7.4. There is no free-text input, so there is nothing for a visitor to inject.
+- **Heal timing.** The server runs one action at a time. Each action has a completion test, for example "all 5 replicas ready" or "the StatefulSet has a new UID and 3 replicas are ready", and the elapsed seconds are shown and kept in a history of 20. An action that does not finish in 5 minutes is reported as timed out.
+- **Testable seams.** The server talks to Kubernetes through a narrow `Backend` interface, so handlers, the tracker, the rate limiter and the stream hub are unit tested with a fake. A second set of tests runs the real `KubeBackend` against fake clients. The frontend has Vitest and React Testing Library tests, and CI also lints and type-checks it.
+
+**Security model**
+- **Least privilege.** The portal runs as its own ServiceAccount with a namespaced `Role` in `demo`, never a `ClusterRole`. It may `get` and `patch` redisclusters, `list`, `watch` and `delete` pods, `get` and `delete` statefulsets, and `list` and `watch` events. That is exactly what the buttons and the live view use, and nothing else (no secrets, no create, no exec, nothing outside `demo`). Checked live with `kubectl auth can-i`. `internal/dashboard/manifests_test.go` pins these rules, so widening them fails `make test`.
+- **A smaller identity for the reset job.** The CronJob uses a second ServiceAccount that can only `get` and `patch` redisclusters.
+- **Rate limiting.** One action per visitor every 30 seconds, keyed by IP address (IPv6 by /64, so a visitor cannot rotate through a whole prefix). A request that is rejected without doing anything gives the visitor's slot back. The address comes from `CF-Connecting-IP` only when the server is started with `--trust-proxy-headers`, which is for use behind Cloudflare; otherwise a client cannot choose its own identity with a header.
+- **Cross-site requests.** Every POST must carry `X-Requested-With: redis-portal`, which a browser will not add to a cross-site form post.
+- **Web hardening.** A strict Content-Security-Policy and the other standard security headers, and error bodies that say nothing about the cluster.
+- **Pod hardening.** Non-root, read-only root filesystem, all capabilities dropped, no privilege escalation, RuntimeDefault seccomp, resource limits.
+- **One replica, on purpose.** The rate limiter, the action tracker and the event history live in memory. A second replica would double each visitor's allowance and show a different history.
+- **Reset.** A CronJob runs `dashboard reset` every 10 minutes and puts the RedisCluster back to 3 replicas and Redis 7.2 with one merge patch, writing nothing when it is already correct. The logic is Go code with unit tests instead of shell inside a manifest.
+
+**Verified live on kind.** The deployed portal scaled the cluster to 5 under its restricted ServiceAccount, a second action inside the cooldown returned 429, a request without the header returned 403, and the reset job restored a cluster changed to 5 replicas and 7.4, then did nothing on a second run.
+
+## 21. GitOps with Argo CD
+
+Argo CD deploys the operator and the portal from this repository. Setup, the private-repository token and the demo are in `docs/argocd.md`.
+
+**What is deployed**
+- **Two Applications** in `deploy/argocd/`. `redis-operator` deploys `deploy/operator` (the CRD, RBAC and manager from `config/default`, with the image name set). `redis-portal` deploys `deploy/portal` (the portal, the reset CronJob, the `demo` namespace and the RedisCluster).
+- **Policy.** Both use automated sync with `prune: true` and `selfHeal: true`, and a retry with backoff, because the portal Application can reach its RedisCluster before the operator Application has installed the CRD (`SkipDryRunOnMissingResource` covers the dry run, retry covers the rest).
+- **`make argocd-up`** builds the two images, loads them into kind, installs Argo CD v3.5.3 (`core-install.yaml`: application controller, repo server, Redis; no UI or login, small enough for an 8 GB laptop), gives Argo CD read access if `ARGOCD_REPO_TOKEN` is set, and applies the Applications. `make argocd-demo` runs the three-step demo below.
+- **Private repository.** Argo CD reads the repository with a token that has read-only access to this repository, stored as a Secret in the cluster and in no file.
+
+**One deliberate exception to "git wins".** The `redis-portal` Application ignores `/spec/replicas` and `/spec/version` of the `rediscluster-sample` RedisCluster (`ignoreDifferences` with `RespectIgnoreDifferences`). The portal's buttons and the reset CronJob change those two fields, so reverting them would make the buttons do nothing. Everything else is held to git. `deploy/argocd/argocd_test.go` pins this: exactly one ignored resource and exactly those two fields.
+
+**Two different kinds of self-healing**
+
+| | Argo CD | The operator |
+|---|---|---|
+| Watches | Resources defined in git (Deployment, Role, CronJob, the RedisCluster object itself) | The children of a RedisCluster (StatefulSet, Services, ConfigMap, Pods) |
+| Desired state comes from | A git commit | The RedisCluster's `spec` |
+| Undoes | A manual `kubectl edit` or delete of a manifest, and removes what was deleted from git | A deleted or edited child resource |
+| Does not know about | Anything the operator creates, because it is not in git | Anything outside a RedisCluster |
+
+They never fight because they own different objects. The one place they touch is the RedisCluster's spec, which is why the two fields above are ignored by Argo CD and left to the operator and the reset job.
+
+**Measured once on kind** (`make argocd-demo`, single runs, not benchmarks)
+- Portal Deployment scaled to 3 by hand: Argo CD put it back to 1 after 5 seconds.
+- RedisCluster scaled to 5 by hand: Argo CD left it alone, the operator scaled to match, and the Application still reported Synced.
+- StatefulSet deleted: the operator recreated it after 3 seconds, and Argo CD, which does not manage it, did nothing.
+
+**Findings while building it**
+- `core-install.yaml` has no API server, and the `default` AppProject is created by the API server, so both Applications sat at `Unknown` with "project default which does not exist". `deploy/argocd/appproject.yaml` defines it (the same permissive spec Argo CD creates, so it changes nothing on a full install). After adding it, an already-created Application needs a refresh (`argocd.argoproj.io/refresh=hard` annotation) or a few minutes before it notices.
+- kubectl warns that the Argo CD finalizer name should be domain-qualified. It is the name Argo CD documents, so it is kept.
