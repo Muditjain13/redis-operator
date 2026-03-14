@@ -74,6 +74,13 @@ token lives in that Secret and nowhere in git. Rotate it before it expires by
 re-running the command with a new token. If the repository is later made public,
 the Secret can be deleted and nothing else changes.
 
+If an Application stays at `Unknown`, check
+`kubectl -n argocd get application <name> -o jsonpath='{.status.conditions}'`. A
+core install has no API server to create the `default` project, so
+`deploy/argocd/appproject.yaml` defines it; an Application created before the
+project existed can be nudged with
+`kubectl -n argocd annotate application <name> argocd.argoproj.io/refresh=hard --overwrite`.
+
 If an Application shows `ComparisonError` with "authentication required" or
 "repository not found", the token is missing, expired, or does not have access to
 this repository.
