@@ -1,0 +1,31 @@
+# --trust-proxy-headers makes the portal believe the CF-Connecting-IP header.
+# Cloudflare overwrites that header at its edge, but only if the request really
+# came through Cloudflare. This policy makes sure it did: the only thing allowed
+# to open a connection to the portal is the cloudflared Pod. Anything else in
+# the cluster that tried would be able to forge the header and get a fresh
+# rate-limit allowance each time.
+#
+# Only ingress is restricted. The portal still reaches the Kubernetes API, and
+# kubelet health checks are not affected by NetworkPolicy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-portal-only-from-cloudflared
+  namespace: demo
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: redis-portal
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cloudflared
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudflared
+      ports:
+        - protocol: TCP
+          port: 8080

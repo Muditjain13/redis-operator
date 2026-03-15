@@ -1,0 +1,24 @@
+# The portal on the hosted k3s VM: deploy/portal plus the three things that only
+# make sense when the portal is reached through Cloudflare.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../portal
+  - networkpolicy.yaml
+
+images:
+  - name: redis-portal
+    newTag: hosted
+
+patches:
+  # Read the visitor address from CF-Connecting-IP, so the rate limit counts
+  # visitors instead of counting the tunnel as one visitor. This is only safe
+  # because networkpolicy.yaml lets nothing but cloudflared reach the portal.
+  - target:
+      kind: Deployment
+      name: redis-portal
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/args/-
+        value: --trust-proxy-headers
