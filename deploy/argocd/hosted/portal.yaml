@@ -1,0 +1,39 @@
+# Hosted k3s VM: the portal behind Cloudflare, with the demo RedisCluster.
+# Ignores the two RedisCluster fields the portal's buttons change; see
+# deploy/argocd/portal.yaml for why.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: redis-portal
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Muditjain13/redis-operator.git
+    targetRevision: main
+    path: deploy/hosting/portal
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: demo
+  ignoreDifferences:
+    - group: cache.mudit.dev
+      kind: RedisCluster
+      name: rediscluster-sample
+      jsonPointers:
+        - /spec/replicas
+        - /spec/version
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - RespectIgnoreDifferences=true
+      - SkipDryRunOnMissingResource=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m

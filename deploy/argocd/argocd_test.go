@@ -31,6 +31,13 @@ import (
 
 const repoURL = "https://github.com/Muditjain13/redis-operator.git"
 
+// allApplications lists every Application manifest: the kind setup and the
+// hosted k3s setup.
+var allApplications = []string{
+	"operator.yaml", "portal.yaml",
+	"hosted/operator.yaml", "hosted/portal.yaml", "hosted/cloudflared.yaml",
+}
+
 // app is the part of an Application these tests look at.
 type app struct {
 	APIVersion string `json:"apiVersion"`
@@ -89,7 +96,7 @@ func load(t *testing.T, file string) app {
 }
 
 func TestEveryApplicationFollowsTheSamePolicy(t *testing.T) {
-	for _, f := range []string{"operator.yaml", "portal.yaml"} {
+	for _, f := range allApplications {
 		a := load(t, f)
 		if a.APIVersion != "argoproj.io/v1alpha1" || a.Kind != "Application" {
 			t.Errorf("%s is a %s %s", f, a.APIVersion, a.Kind)
@@ -122,41 +129,62 @@ func TestEveryApplicationFollowsTheSamePolicy(t *testing.T) {
 	}
 }
 
-func TestOperatorApplication(t *testing.T) {
-	a := load(t, "operator.yaml")
-	if a.Spec.Source.Path != "deploy/operator" || a.Spec.Destination.Namespace != "redis-operator-system" {
-		t.Errorf("source path %q, destination namespace %q", a.Spec.Source.Path, a.Spec.Destination.Namespace)
-	}
-	if !slices.Contains(a.Spec.SyncPolicy.SyncOptions, "ServerSideApply=true") {
-		t.Error("the CRD should be applied server side")
-	}
-	if len(a.Spec.IgnoreDifferences) != 0 {
-		t.Errorf("the operator Application should ignore nothing, got %+v", a.Spec.IgnoreDifferences)
+func TestOperatorApplications(t *testing.T) {
+	for file, path := range map[string]string{
+		"operator.yaml":        "deploy/operator",
+		"hosted/operator.yaml": "deploy/hosting/operator",
+	} {
+		a := load(t, file)
+		if a.Spec.Source.Path != path || a.Spec.Destination.Namespace != "redis-operator-system" {
+			t.Errorf("%s: source path %q, destination namespace %q", file, a.Spec.Source.Path, a.Spec.Destination.Namespace)
+		}
+		if !slices.Contains(a.Spec.SyncPolicy.SyncOptions, "ServerSideApply=true") {
+			t.Errorf("%s: the CRD should be applied server side", file)
+		}
+		if len(a.Spec.IgnoreDifferences) != 0 {
+			t.Errorf("%s: the operator Application should ignore nothing, got %+v", file, a.Spec.IgnoreDifferences)
+		}
 	}
 }
 
-func TestPortalApplicationLeavesTheButtonFieldsAlone(t *testing.T) {
-	a := load(t, "portal.yaml")
-	if a.Spec.Source.Path != "deploy/portal" || a.Spec.Destination.Namespace != "demo" {
+func TestPortalApplicationsLeaveTheButtonFieldsAlone(t *testing.T) {
+	for file, path := range map[string]string{
+		"portal.yaml":        "deploy/portal",
+		"hosted/portal.yaml": "deploy/hosting/portal",
+	} {
+		a := load(t, file)
+		if a.Spec.Source.Path != path || a.Spec.Destination.Namespace != "demo" {
+			t.Errorf("%s: source path %q, destination namespace %q", file, a.Spec.Source.Path, a.Spec.Destination.Namespace)
+		}
+
+		// Exactly these two fields of exactly this one resource: ignoring more
+		// would hide real drift from Argo CD.
+		if len(a.Spec.IgnoreDifferences) != 1 {
+			t.Errorf("%s: ignoreDifferences = %+v, want one entry", file, a.Spec.IgnoreDifferences)
+			continue
+		}
+		ig := a.Spec.IgnoreDifferences[0]
+		if ig.Group != "cache.mudit.dev" || ig.Kind != "RedisCluster" || ig.Name != "rediscluster-sample" {
+			t.Errorf("%s: ignored resource = %s/%s %s", file, ig.Group, ig.Kind, ig.Name)
+		}
+		if !reflect.DeepEqual(ig.JSONPointers, []string{"/spec/replicas", "/spec/version"}) {
+			t.Errorf("%s: ignored fields = %v, want /spec/replicas and /spec/version", file, ig.JSONPointers)
+		}
+		for _, opt := range []string{"RespectIgnoreDifferences=true", "SkipDryRunOnMissingResource=true"} {
+			if !slices.Contains(a.Spec.SyncPolicy.SyncOptions, opt) {
+				t.Errorf("%s: syncOptions lack %s", file, opt)
+			}
+		}
+	}
+}
+
+func TestCloudflaredApplication(t *testing.T) {
+	a := load(t, "hosted/cloudflared.yaml")
+	if a.Spec.Source.Path != "deploy/hosting/cloudflared" || a.Spec.Destination.Namespace != "cloudflared" {
 		t.Errorf("source path %q, destination namespace %q", a.Spec.Source.Path, a.Spec.Destination.Namespace)
 	}
-
-	// Exactly these two fields of exactly this one resource: ignoring more
-	// would hide real drift from Argo CD.
-	if len(a.Spec.IgnoreDifferences) != 1 {
-		t.Fatalf("ignoreDifferences = %+v, want one entry", a.Spec.IgnoreDifferences)
-	}
-	ig := a.Spec.IgnoreDifferences[0]
-	if ig.Group != "cache.mudit.dev" || ig.Kind != "RedisCluster" || ig.Name != "rediscluster-sample" {
-		t.Errorf("ignored resource = %s/%s %s", ig.Group, ig.Kind, ig.Name)
-	}
-	if !reflect.DeepEqual(ig.JSONPointers, []string{"/spec/replicas", "/spec/version"}) {
-		t.Errorf("ignored fields = %v, want /spec/replicas and /spec/version", ig.JSONPointers)
-	}
-	for _, opt := range []string{"RespectIgnoreDifferences=true", "SkipDryRunOnMissingResource=true"} {
-		if !slices.Contains(a.Spec.SyncPolicy.SyncOptions, opt) {
-			t.Errorf("syncOptions lack %s", opt)
-		}
+	if len(a.Spec.IgnoreDifferences) != 0 {
+		t.Errorf("cloudflared should ignore nothing, got %+v", a.Spec.IgnoreDifferences)
 	}
 }
 
@@ -180,7 +208,7 @@ func TestDefaultProjectIsDefined(t *testing.T) {
 	if p.Kind != "AppProject" || p.Metadata.Name != "default" || p.Metadata.Namespace != "argocd" {
 		t.Fatalf("appproject.yaml defines %s %s/%s", p.Kind, p.Metadata.Namespace, p.Metadata.Name)
 	}
-	for _, f := range []string{"operator.yaml", "portal.yaml"} {
+	for _, f := range allApplications {
 		if got := load(t, f).Spec.Project; got != p.Metadata.Name {
 			t.Errorf("%s uses project %q, want %q", f, got, p.Metadata.Name)
 		}
