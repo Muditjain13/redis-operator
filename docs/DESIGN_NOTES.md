@@ -636,7 +636,7 @@ Observed on the Windows 11 development machine with Docker Desktop 4.95 (WSL2 ba
 
 ## 20. Platform portal
 
-A live demo page for the operator. It shows the RedisCluster's Pods and the operator's events as they change, lets a visitor break things with five buttons, and reports how many seconds each recovery took. Hosting is covered in a later section once it exists.
+A live demo page for the operator. It shows the RedisCluster's Pods and the operator's events as they change, lets a visitor break things with five buttons, and reports how many seconds each recovery took. Hosting is covered in section 22.
 
 **What it is**
 - **One container.** A Go server (`internal/dashboard`, started by a thin `cmd/dashboard`) serves a React and TypeScript UI (`web/`, built with Vite) that is embedded into the binary with `go:embed`. The image is `Dockerfile.portal`: a Node stage builds the UI, a Go stage builds the binary, and a distroless nonroot image runs it.
@@ -688,3 +688,21 @@ They never fight because they own different objects. The one place they touch is
 **Findings while building it**
 - `core-install.yaml` has no API server, and the `default` AppProject is created by the API server, so both Applications sat at `Unknown` with "project default which does not exist". `deploy/argocd/appproject.yaml` defines it (the same permissive spec Argo CD creates, so it changes nothing on a full install). After adding it, an already-created Application needs a refresh (`argocd.argoproj.io/refresh=hard` annotation) or a few minutes before it notices.
 - kubectl warns that the Argo CD finalizer name should be domain-qualified. It is the name Argo CD documents, so it is kept.
+
+## 22. Hosting and development environment
+
+**Hosting (`docs/hosting.md`, `deploy/hosting/`, `deploy/argocd/hosted/`).** The same two Applications plus a third for `cloudflared`, run on one Oracle Cloud Always Free VM with k3s.
+- **Overlays, not copies.** `deploy/hosting/operator` and `deploy/hosting/portal` reuse the base kustomizations and change only what hosting changes: the image tag, and for the portal the `--trust-proxy-headers` flag and a NetworkPolicy. The hosted Applications point at those overlays.
+- **No registry.** `hack/hosted-images.sh` builds both images on the VM and imports them into k3s's containerd. That avoids pull secrets for a private repository. The cost is that the tag `hosted` never changes, so a code change needs a rebuild and a rollout restart; Argo CD only sees manifest changes. A published, versioned image is the obvious next step.
+- **Inbound is closed.** `cloudflared` dials out to Cloudflare, so the VM exposes only SSH. Traefik and the service load balancer are disabled in k3s because nothing needs them.
+- **Why the network policy is part of the security model.** The per-visitor rate limit needs the real visitor address, which behind a tunnel only exists in the `CF-Connecting-IP` header. A header is only trustworthy if the request really came through Cloudflare, so the policy lets nothing but the cloudflared Pod connect to the portal. `deploy/hosting/hosting_test.go` pins the policy, the flag's presence in the overlay and its absence from the base, and that the tunnel token comes from a Secret and never from git.
+- **Secrets stay out of git.** The tunnel token and the Argo CD repository token are created by hand. `cloudflared` is pinned to a specific release and runs non-root with a read-only filesystem and no Kubernetes token.
+- **Not verified on a real VM.** The overlays render, the policies and flags are unit tested, and the Argo CD flow was run on kind. The Oracle, k3s and Cloudflare steps follow their documentation but have not been run end to end. The guide says so.
+
+**Devcontainer (`.devcontainer/`).** For GitHub Codespaces or any devcontainer-capable editor.
+- **What it provides.** Go 1.26 (the base image), Node 24, Docker-in-Docker, kind v0.33.0, kubectl v1.37.0 and kubebuilder v4.16.0. That is everything `make test`, `make lint`, `make test-e2e`, `make web-check`, `make kind-deploy` and `make portal-deploy` need.
+- **Pinned and checked.** The Kubebuilder scaffold downloaded `latest` for each tool. They are now pinned to the versions CI and local development use, and each download is verified against a SHA-256 taken from the project's own release before it is installed. The devcontainer features are locked by digest in `devcontainer-lock.json`.
+- **Sized for kind.** `hostRequirements` asks for 4 cores (16 GB in Codespaces), because kind runs a node inside Docker and the e2e tests run the operator on top. Port 8080 is forwarded for `make portal-run`.
+- **Tested.** Built and started with the official devcontainers CLI (v0.89.0): all three tools passed their checksums, Docker-in-Docker came up, and `go version`, `node --version` and the setup script's own verification step all succeeded. The test run did not get as far as running the full suites inside the container: the machine ran out of disk space during it (see below), so that part is not verified.
+
+**Lesson from testing the devcontainer.** The container bind-mounts the repository, so its `npm ci` replaced the Windows `web/node_modules` with Linux binaries, and its Go build cache and the 2.7 GB image grew Docker's disk until the host's C: drive hit 0 GB free and Docker stopped answering. In Codespaces the checkout is a Linux volume and none of that applies; on a Windows laptop with 8 GB of RAM and a small disk, test devcontainers sparingly and prune afterwards.
