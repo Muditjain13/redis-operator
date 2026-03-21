@@ -22,7 +22,7 @@ export function ActionPanel({ inFlight, cooldown, submitting, error, onAction }:
 
   return (
     <section aria-labelledby="actions-heading">
-      <h2 id="actions-heading">Break something</h2>
+      <h2 id="actions-heading">Actions</h2>
       <div className="actions">
         {ACTIONS.map((a) => (
           <button
