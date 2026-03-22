@@ -1,10 +1,7 @@
-import type { Theme } from '../hooks';
 import type { ConnectionStatus } from '../types';
 
 interface Props {
   status: ConnectionStatus;
-  theme: Theme;
-  onToggleTheme: () => void;
 }
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {
@@ -13,7 +10,7 @@ const STATUS_LABEL: Record<ConnectionStatus, string> = {
   reconnecting: 'Reconnecting…',
 };
 
-export function Header({ status, theme, onToggleTheme }: Props) {
+export function Header({ status }: Props) {
   return (
     <header className="top">
       <div>
@@ -27,9 +24,6 @@ export function Header({ status, theme, onToggleTheme }: Props) {
           <span className="dot" aria-hidden="true" />
           {STATUS_LABEL[status]}
         </span>
-        <button type="button" className="theme-toggle" onClick={onToggleTheme} aria-pressed={theme === 'dark'}>
-          {theme === 'dark' ? 'Dark' : 'Light'} mode
-        </button>
         <a href="https://github.com/Muditjain13/redis-operator" rel="noopener noreferrer" target="_blank">
           Source
         </a>

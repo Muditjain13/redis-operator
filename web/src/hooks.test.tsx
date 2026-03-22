@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { normalizeState, useNow, useStream, useTheme } from './hooks';
+import { normalizeState, useNow, useStream } from './hooks';
 import { FakeEventSource, createFakeSource } from './test/fakeEventSource';
 import { makeState } from './test/fixtures';
 
@@ -11,8 +11,6 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  localStorage.clear();
-  delete document.documentElement.dataset.theme;
 });
 
 describe('normalizeState', () => {
@@ -111,60 +109,5 @@ describe('useNow', () => {
 
     unmount();
     expect(vi.getTimerCount()).toBe(0);
-  });
-});
-
-describe('useTheme', () => {
-  it('uses a saved choice over the system setting', () => {
-    localStorage.setItem('theme', 'dark');
-    const { result } = renderHook(() => useTheme());
-    expect(result.current.theme).toBe('dark');
-    expect(document.documentElement.dataset.theme).toBe('dark');
-  });
-
-  it('follows the system setting when nothing is saved', () => {
-    vi.stubGlobal('matchMedia', () => ({ matches: true }));
-    const { result } = renderHook(() => useTheme());
-    expect(result.current.theme).toBe('dark');
-  });
-
-  it('defaults to light', () => {
-    const { result } = renderHook(() => useTheme());
-    expect(result.current.theme).toBe('light');
-  });
-
-  it('ignores a junk saved value', () => {
-    localStorage.setItem('theme', 'purple');
-    const { result } = renderHook(() => useTheme());
-    expect(result.current.theme).toBe('light');
-  });
-
-  it('toggles, applies the theme to the page and remembers it', () => {
-    const { result } = renderHook(() => useTheme());
-
-    act(() => result.current.toggle());
-    expect(result.current.theme).toBe('dark');
-    expect(document.documentElement.dataset.theme).toBe('dark');
-    expect(localStorage.getItem('theme')).toBe('dark');
-
-    act(() => result.current.toggle());
-    expect(result.current.theme).toBe('light');
-    expect(localStorage.getItem('theme')).toBe('light');
-  });
-
-  it('still works when storage is blocked', () => {
-    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
-      throw new Error('blocked');
-    });
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('blocked');
-    });
-
-    const { result } = renderHook(() => useTheme());
-    expect(result.current.theme).toBe('light');
-    act(() => result.current.toggle());
-    expect(result.current.theme).toBe('dark');
-
-    vi.restoreAllMocks();
   });
 });

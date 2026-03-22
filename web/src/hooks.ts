@@ -55,36 +55,3 @@ export function useStream(
 
   return { state, status };
 }
-
-export type Theme = 'light' | 'dark';
-
-function initialTheme(): Theme {
-  try {
-    const saved = localStorage.getItem('theme');
-    if (saved === 'light' || saved === 'dark') return saved;
-  } catch {
-    // Storage can be blocked (private mode); fall through to the system setting.
-  }
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-}
-
-/** Light or dark mode: the saved choice, else the system setting. Applied as data-theme on <html>. */
-export function useTheme(): { theme: Theme; toggle: () => void } {
-  const [theme, setTheme] = useState<Theme>(initialTheme);
-
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-  }, [theme]);
-
-  const toggle = () => {
-    const next: Theme = theme === 'dark' ? 'light' : 'dark';
-    setTheme(next);
-    try {
-      localStorage.setItem('theme', next);
-    } catch {
-      // Not persisting is fine.
-    }
-  };
-
-  return { theme, toggle };
-}

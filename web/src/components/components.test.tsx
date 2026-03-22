@@ -220,25 +220,17 @@ describe('Header', () => {
     ['live', 'Live'],
     ['reconnecting', 'Reconnecting…'],
   ] as const)('shows the %s connection status', (status, label) => {
-    render(<Header status={status} theme="light" onToggleTheme={() => {}} />);
+    render(<Header status={status} />);
     expect(screen.getByRole('status')).toHaveTextContent(label);
   });
 
-  it('toggles the theme and reports which one is on', async () => {
-    const onToggle = vi.fn();
-    const { rerender } = render(<Header status="live" theme="light" onToggleTheme={onToggle} />);
-
-    const button = screen.getByRole('button', { name: 'Light mode' });
-    expect(button).toHaveAttribute('aria-pressed', 'false');
-    await userEvent.click(button);
-    expect(onToggle).toHaveBeenCalledTimes(1);
-
-    rerender(<Header status="live" theme="dark" onToggleTheme={onToggle} />);
-    expect(screen.getByRole('button', { name: 'Dark mode' })).toHaveAttribute('aria-pressed', 'true');
+  it('has no theme switch: the portal is light only', () => {
+    render(<Header status="live" />);
+    expect(screen.queryByRole('button')).not.toBeInTheDocument();
   });
 
   it('links to the source safely', () => {
-    render(<Header status="live" theme="light" onToggleTheme={() => {}} />);
+    render(<Header status="live" />);
     const link = screen.getByRole('link', { name: 'Source' });
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
     expect(link).toHaveAttribute('target', '_blank');

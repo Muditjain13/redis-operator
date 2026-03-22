@@ -1,4 +1,4 @@
-/* Kubernetes blue is #326CE5. Colours are variables so light and dark share one set of rules. */
+/* Kubernetes blue is #326CE5. Light theme only; colours are variables so they are set in one place. */
 :root {
   --blue: #326ce5;
   --blue-text: #2457c5; /* blue for text on the light surface; 4.5:1 or better */
@@ -16,45 +16,6 @@
   --idle-bg: #eceff5;
   --shadow: 0 1px 2px rgb(15 23 42 / 0.06);
   color-scheme: light;
-}
-
-/* Dark: follow the system unless the visitor picked a theme with the toggle. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) {
-    --blue-text: #8db0ff;
-    --bg: #0e1420;
-    --surface: #161e2e;
-    --text: #e8edf6;
-    --muted: #9aa6bb;
-    --border: #2a3550;
-    --good: #5fd18b;
-    --good-bg: #12301f;
-    --busy: #f0c060;
-    --busy-bg: #35290d;
-    --bad: #ff8a80;
-    --bad-bg: #3a1714;
-    --idle-bg: #1f2a40;
-    --shadow: none;
-    color-scheme: dark;
-  }
-}
-
-:root[data-theme='dark'] {
-  --blue-text: #8db0ff;
-  --bg: #0e1420;
-  --surface: #161e2e;
-  --text: #e8edf6;
-  --muted: #9aa6bb;
-  --border: #2a3550;
-  --good: #5fd18b;
-  --good-bg: #12301f;
-  --busy: #f0c060;
-  --busy-bg: #35290d;
-  --bad: #ff8a80;
-  --bad-bg: #3a1714;
-  --idle-bg: #1f2a40;
-  --shadow: none;
-  color-scheme: dark;
 }
 
 * {
@@ -150,17 +111,6 @@ section,
   flex-wrap: wrap;
   gap: 0.75rem;
   align-items: center;
-}
-
-.theme-toggle {
-  min-height: 44px;
-  padding: 0 0.9rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-  font: inherit;
-  cursor: pointer;
 }
 
 .live {

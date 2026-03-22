@@ -7,7 +7,7 @@ import { EventFeed } from './components/EventFeed';
 import { Header } from './components/Header';
 import { HealTimings } from './components/HealTimings';
 import { PodGrid } from './components/PodGrid';
-import { useNow, useStream, useTheme } from './hooks';
+import { useNow, useStream } from './hooks';
 import type { ActionName } from './types';
 
 function describeError(error: unknown): string {
@@ -17,7 +17,6 @@ function describeError(error: unknown): string {
 
 export default function App() {
   const { state, status } = useStream();
-  const { theme, toggle } = useTheme();
   const now = useNow();
 
   const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
@@ -46,7 +45,7 @@ export default function App() {
 
   return (
     <div className="page">
-      <Header status={status} theme={theme} onToggleTheme={toggle} />
+      <Header status={status} />
       <main>
         {state === null ? (
           <p className="muted" role="status">

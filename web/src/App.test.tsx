@@ -17,8 +17,6 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  localStorage.clear();
-  delete document.documentElement.dataset.theme;
 });
 
 function showState(state: PortalState) {
@@ -149,17 +147,6 @@ describe('App', () => {
       expect(button).toBeDisabled();
     }
     expect(screen.getByText(/Waiting for “Scale up to 5” to settle/)).toBeInTheDocument();
-  });
-
-  it('toggles between light and dark', async () => {
-    render(<App />);
-    showState(makeState());
-    expect(document.documentElement.dataset.theme).toBe('light');
-
-    await userEvent.click(screen.getByRole('button', { name: 'Light mode' }));
-
-    expect(document.documentElement.dataset.theme).toBe('dark');
-    expect(screen.getByRole('button', { name: 'Dark mode' })).toBeInTheDocument();
   });
 
   it('shows the connection dropping and coming back', () => {
