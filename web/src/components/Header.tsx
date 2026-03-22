@@ -17,9 +17,9 @@ export function Header({ status, theme, onToggleTheme }: Props) {
   return (
     <header className="top">
       <div>
-        <h1>Redis operator</h1>
+        <h1>Redis operator, live</h1>
         <p className="muted">
-          A live RedisCluster in the demo namespace. Delete or change things and see how long it takes to recover.
+          A Kubernetes operator keeps this Redis cluster healthy. Break it and watch it repair itself.
         </p>
       </div>
       <div className="top-controls">
