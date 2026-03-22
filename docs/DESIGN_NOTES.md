@@ -596,6 +596,13 @@ The web UI (`web/`) follows one rule for every npm package, direct or transitive
 - *Scope of the change:* exactly one package changed in the lockfile (1.2.1 to 1.2.2); nothing else was re-resolved.
 - *When to remove it:* once the version npm resolves for `css-tree` and `postcss` is 1.2.2 or newer without help, delete the `overrides` block. Until then it must stay, or the vulnerable 1.2.1 returns.
 
+**A second exception: `vite` 8.3.3**
+`vite` is pinned to **8.3.3** (published 6 October 2026), 15 days old when adopted on 21 October 2026, instead of 8.3.0.
+- *Why:* `npm audit` began reporting a high severity finding against `vite` 8.3.0 to 8.3.2: three advisories in `launch-editor` (GHSA-698v-4r3x-3vcv, GHSA-r825-w8mm-5pxw, GHSA-587h-7wmj-h5pm), about opening files in an editor on Windows. `launch-editor` does not appear as a separate package in the tree, so the fix is a newer `vite`.
+- *Why it is acceptable:* 8.3.3 is the oldest release outside the affected range, so it is the least new version that clears the audit. It comes from the same maintainers and package. The finding concerns a development-time feature; the production build and the portal image, whose runtime is a Go binary with no Node, never run it. It is still fixed, because the audit should stay clean.
+- *Scope of the change:* `vite` plus the two packages it pulls with it. Its declared range is `rolldown ~1.2.11`, and a plain install resolved `rolldown` 1.2.15 (published the same day) and `@oxc-project/types` 0.155.0. Those entries were removed from the lockfile and resolved again with `--before=2026-09-25`, which gave `rolldown` 1.2.11 (27 days old) and `@oxc-project/types` 0.151.0 (30 days old), so only `vite` itself is under 28 days. The rolldown platform bindings moved with it.
+- *When it stops being an exception:* on 3 November 2026, when 8.3.3 turns 28 days old. Nothing needs removing; this entry only records why the pin is newer than the rule for those days.
+
 Any future exception should be recorded here in the same form: what, why, why acceptable, and when to remove it.
 
 ## 19. Troubleshooting: intermittent Docker pull failures on Windows
