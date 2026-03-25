@@ -13,15 +13,22 @@ Contents
 7. [How reconcile works](#7-how-reconcile-works)
 8. [Design decisions and trade-offs](#8-design-decisions-and-trade-offs)
 9. [Failure modes](#9-failure-modes)
-10. [Production readiness](#10-production-readiness)
+10. [Production readiness](#10-production-readiHosting and development environmentness)
 11. [Testing strategy](#11-testing-strategy)
 12. [CI, badges and measurements](#12-ci-badges-and-measurements)
 13. [Local development, quickstart and demo](#13-local-development-quickstart-and-demo)
 14. [Key points from each build phase](#14-key-points-from-each-build-phase)
-15. [Known limitations and future work](#15-known-limitations-and-future-work)
-16. [Interview talking points](#16-interview-talking-points)
-17. [README checklist](#17-readme-checklist)
-18. [Web UI dependency policy](#18-web-ui-dependency-policy)
+15. [Known limitations and future work](#16-known-limitations-and-future-work)
+16. [README checklist](#17-readme-checklist)
+17. [Web UI dependency policy](#17-web-ui-dependency-policy)
+18. [Troubleshooting: intermittent Docker pull failures on Windows](#18-Troubleshooting:-intermittent-docker-pull-failures-on-windows)
+19. [Platform portal](#19-platform-portal)
+20. [GitOps with Argo CD ](#20-gitOps-with-argo-cd)
+21. [Hosting and development environment] (#21-hosting-and-development-environment)
+
+
+
+
 
 ---
 
@@ -541,20 +548,9 @@ Limitations to state openly:
 
 Reasonable next steps, in rough order of value: progress deadline condition; replication (primary + replicas) with a read/write Service; PDB + topology spread; Redis auth via Secret; storage expansion; custom metrics (reconcile duration, heal counter); a validating webhook.
 
-## 16. Interview talking points
 
-- **What is the reconcile loop and why level-based?** It compares desired and actual state every time instead of reacting to deltas, so crashes, restarts and lost events converge. Every property I tested (idempotence, healing, rollout progress) follows from that.
-- **How does self-healing work?** `Owns()` registers watches on the StatefulSet, Service and ConfigMap with an owner-reference mapping. Deleting or editing a child produces an event for the owner; the reconcile re-applies the desired state with `CreateOrUpdate`. No polling.
-- **Your recovery badge says tens of seconds; is the operator slow?** No: I measure two things from the same instant. The operator recreates the StatefulSet object within a couple of seconds (the "operator reaction" badge, which includes the test's own kubectl overhead); the rest of "full recovery" is Kubernetes starting three Pods one after another (`OrderedReady`) with a readiness probe that waits at least 5 s per Pod (section 12.5).
-- **How do you avoid hot-looping?** Mutate functions only set owned fields, so a converged system issues zero writes; status is patched only if it changed; conditions keep their `lastTransitionTime` unless the status flips. Tested through unchanged `resourceVersion`.
-- **Who does the rolling upgrade?** The StatefulSet controller; the operator only sets the strategy and reports progress. I assert one-at-a-time by sampling ready replicas during the e2e upgrade.
-- **What happens if the operator dies mid-upgrade?** Nothing bad: the data plane is independent and the next reconcile recomputes status from the StatefulSet. No in-memory state to lose.
-- **Why a finalizer if owner references already clean up?** It is the deletion hook; today it only logs, and the trade-off is a CR stuck in Terminating while the operator is down.
-- **What would you build next?** Replication, a progress deadline, PDB/topology spread, auth, storage expansion.
-- **How did you test it?** envtest for fast, controllable, branch-complete tests (with a fake StatefulSet controller and failure injection); e2e on kind for the real integration; lint and Go Report Card; badges measured in CI from those runs.
-- **A bug I found by actually running it:** the first real linter run found four issues; the `Ready` column was blank until I stopped omitting zero values; the scaffolded e2e helpers broke on Windows; a Go Report Card run printed a bogus F instead of failing when its tools were missing.
 
-## 17. README checklist
+## 16. README checklist
 
 Everything the README needs, with where to find it here:
 
@@ -574,7 +570,7 @@ Everything the README needs, with where to find it here:
 - [ ] License: Apache 2.0
 - [ ] Do **not** type measured numbers into prose; link badges. If a number must appear, state that it is measured by CI.
 
-## 18. Web UI dependency policy
+## 17. Web UI dependency policy
 
 The web UI (`web/`) follows one rule for every npm package, direct or transitive, and has one documented exception.
 
@@ -589,28 +585,8 @@ The web UI (`web/`) follows one rule for every npm package, direct or transitive
 - `jsdom` is 29.x, not 30: jsdom 30 needs Node 24.15 or newer, which is not what the development machine runs, so it was not officially supported there.
 - `vitest` is 4.x, not 5: a judgement call. Vitest 5 was about six weeks old and still shipping patches every few days; 4.1.x is the mature final release of the previous major and declares support for Vite 8. The suite also passed on Vitest 5, so moving up later is low risk.
 
-**The exception: security patches from the original maintainer**
-`source-map-js` is pinned to **1.2.2** through an `overrides` entry in `web/package.json`, although 1.2.2 was released fewer than 28 days before it was adopted.
-- *Why:* `source-map-js` 1.0.0 to 1.2.1 allows an event-loop denial of service through indexed source-map section offsets (GHSA-68fv-2mgg-jv7q); 1.2.2 is the first patched release. `npm audit` flagged the older version as high severity.
-- *Why it is acceptable:* it is a security fix, published by the same sole maintainer and from the same repository as 1.2.1 (`7rulnik/source-map-js`, same licence), and the advisory itself points at that repository. The package is only reached through `jsdom` (via `css-tree`) and `vite` (via `postcss`), so it affects building and testing, not what browsers receive.
-- *Scope of the change:* exactly one package changed in the lockfile (1.2.1 to 1.2.2); nothing else was re-resolved.
-- *When to remove it:* once the version npm resolves for `css-tree` and `postcss` is 1.2.2 or newer without help, delete the `overrides` block. Until then it must stay, or the vulnerable 1.2.1 returns.
 
-**A second exception: `vite` 8.3.3**
-`vite` is pinned to **8.3.3** (published 6 October 2026), 15 days old when adopted on 21 October 2026, instead of 8.3.0.
-- *Why:* `npm audit` began reporting a high severity finding against `vite` 8.3.0 to 8.3.2. It is three advisories in `launch-editor`, published 20 October 2026: GHSA-698v-4r3x-3vcv (`%` is not escaped in command arguments on Windows, medium), GHSA-r825-w8mm-5pxw (an editor command-line flag can be misread, allowing command execution with some editors, medium) and GHSA-587h-7wmj-h5pm (a file existence check can be bypassed on Windows, high). All three are fixed in `launch-editor` 2.14.2. npm rates the package by its worst advisory, hence "high".
-- *Why it is dev-only:* `launch-editor` is what Vite's development server uses to open a file in your editor (for example from the error overlay). It is bundled inside Vite's own Node-side code (`vite/dist/node/chunks/node.js`) and is not a separate package in the tree, so only a newer `vite` fixes it. Checked: the production bundle (`web/dist`) and the copy embedded in the Go binary contain no mention of `launch-editor`, and the portal image runs a Go binary on `distroless/static`, which has no Node at all. Only someone running `npm run dev` on Windows was exposed.
-- *Why 8.3.3 is a legitimate release:* its release notes say "update launch-editor to v2.14.2", which is the patched version. npm shows it published through GitHub Actions trusted publishing (OIDC) by the same two maintainers as 8.3.0 (`yyx990803` and `vitebot`). Its signed SLSA provenance attestation names the `vitejs/vite` repository, workflow `.github/workflows/publish.yml`, ref `main` and commit `fea5b21dd952`, and that commit is "release: v8.3.3" in `vitejs/vite`. `npm audit signatures` verifies the registry signatures and attestations of the installed tree (243 and 97 packages respectively).
-- *Why it is acceptable:* 8.3.3 is the oldest release outside the affected range, so it is the least new version that clears the audit, and it comes from the original maintainers and repository as above.
-- *Why not 8.3.5, which `npm audit fix --force` suggests:* 8.3.5 is also genuine (same maintainers, same workflow, commit `981f07fa4580` is "release: v8.3.5"), but it adds nothing for this advisory, because the fix is already in 8.3.3. Moving to it from 8.3.3 changes 20 packages for no security gain: `vite` 8.3.5, `rolldown` 1.2.15 (published the day before), `@oxc-project/types` 0.155.0 (3 days old), `postcss` 8.5.31, `nanoid` 3.3.20 and the 15 `rolldown` platform bindings. That is exactly the kind of fresh transitive churn the 28 day rule exists to avoid.
-- *What `npm audit fix --force` would have changed from the original 8.3.0 tree* (simulated in a scratch copy, not applied): no major version bump, and it rewrites `package.json` with new exact pins for two packages, `vite` 8.3.0 to 8.3.5 and `vitest` 4.1.11 to 4.1.12 (outside the stated range only because the versions are pinned exactly). It also moves 30 packages in the lockfile, including `rolldown` 1.2.9 to 1.2.15, `postcss`, `nanoid`, `chai` and `tinyrainbow`. `--force` ignores the 28 day rule, so the manual route above was used instead.
-- *Scope of the change:* `vite` plus the two packages it pulls with it. Its declared range is `rolldown ~1.2.11`, and a plain install resolved `rolldown` 1.2.15 (published the same day) and `@oxc-project/types` 0.155.0. Those entries were removed from the lockfile and resolved again with `--before=2026-09-25`, which gave `rolldown` 1.2.11 (27 days old) and `@oxc-project/types` 0.151.0 (30 days old), so only `vite` itself is under 28 days. The rolldown platform bindings moved with it.
-- *Checks after the change* (22 October 2026, with `vite` 8.3.3 installed): `npm run build` (the built file names match the bundle deployed to the cluster), `npm run lint` and `npm run typecheck` clean, `npm test` 73 passed, and `make test` and `make lint` on the Go side passed with 0 issues. Nothing on the Go side, in the Makefile, the Dockerfile or the workflows refers to Vite.
-- *When it stops being an exception:* on 3 November 2026, when 8.3.3 turns 28 days old. Nothing needs removing; this entry only records why the pin is newer than the rule for those days.
-
-Any future exception should be recorded here in the same form: what, why, why acceptable, and when to remove it.
-
-## 19. Troubleshooting: intermittent Docker pull failures on Windows
+## 18. Troubleshooting: intermittent Docker pull failures on Windows
 
 Observed on the Windows 11 development machine with Docker Desktop 4.95 (WSL2 backend). It is a local problem and does not affect CI.
 
@@ -646,7 +622,7 @@ Observed on the Windows 11 development machine with Docker Desktop 4.95 (WSL2 ba
 
 **Related symptom.** `go mod download` inside `docker build` sometimes fails with `remote error: tls: protocol version not supported` from `proxy.golang.org`. A retry succeeds, so the same workaround applies.
 
-## 20. Platform portal
+## 19. Platform portal
 
 A live demo page for the operator. It shows the RedisCluster's Pods and the operator's events as they change, lets a visitor break things with five buttons, and reports how many seconds each recovery took. Hosting is covered in section 22.
 
@@ -669,7 +645,7 @@ A live demo page for the operator. It shows the RedisCluster's Pods and the oper
 
 **Verified live on kind.** The deployed portal scaled the cluster to 5 under its restricted ServiceAccount, a second action inside the cooldown returned 429, a request without the header returned 403, and the reset job restored a cluster changed to 5 replicas and 7.4, then did nothing on a second run.
 
-## 21. GitOps with Argo CD
+## 20. GitOps with Argo CD
 
 Argo CD deploys the operator and the portal from this repository. Setup, the private-repository token and the demo are in `docs/argocd.md`.
 
@@ -701,7 +677,7 @@ They never fight because they own different objects. The one place they touch is
 - `core-install.yaml` has no API server, and the `default` AppProject is created by the API server, so both Applications sat at `Unknown` with "project default which does not exist". `deploy/argocd/appproject.yaml` defines it (the same permissive spec Argo CD creates, so it changes nothing on a full install). After adding it, an already-created Application needs a refresh (`argocd.argoproj.io/refresh=hard` annotation) or a few minutes before it notices.
 - kubectl warns that the Argo CD finalizer name should be domain-qualified. It is the name Argo CD documents, so it is kept.
 
-## 22. Hosting and development environment
+## 21. Hosting and development environment
 
 **Hosting (`docs/hosting.md`, `deploy/hosting/`, `deploy/argocd/hosted/`).** The same two Applications plus a third for `cloudflared`, run on one Oracle Cloud Always Free VM with k3s.
 - **Overlays, not copies.** `deploy/hosting/operator` and `deploy/hosting/portal` reuse the base kustomizations and change only what hosting changes: the image tag, and for the portal the `--trust-proxy-headers` flag and a NetworkPolicy. The hosted Applications point at those overlays.
