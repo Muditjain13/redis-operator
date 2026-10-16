@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "label": "rolling upgrade",
+  "message": "3/3 pods",
+  "color": "brightgreen"
+}
