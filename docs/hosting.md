@@ -17,14 +17,20 @@ The VM opens **no inbound port to the internet** except SSH. The tunnel connects
 outward from the VM to Cloudflare. Checked from outside: only port 22 answers; the
 k3s API (6443), the kubelet (10250), 80 and 443 do not.
 
-> **Status.** Run end to end on a Google Cloud VM (e2-medium: 2 vCPU, 4 GB,
-> Ubuntu 24.04, x86_64) on 23 October 2026. Verified there: the k3s install, the
-> operator, the portal and the demo RedisCluster, the named tunnel, the public
-> HTTPS endpoint, the network policy, and the per-visitor rate limit.
-> **Not** run on the VM: Argo CD (step 6; it was run on kind, see
-> `docs/argocd.md`), building the images on the VM (step 3, option B), and an
-> Oracle Cloud VM, which this guide used to assume. Cloud consoles change their
-> menus often, so look for settings by name.
+> **Status.** Run on a Google Cloud VM (e2-medium: 2 vCPU, 4 GB, Ubuntu 24.04,
+> x86_64) on 23 October 2026. Verified there: the k3s install, the operator, the
+> portal and the demo RedisCluster, the named tunnel, the public HTTPS endpoint,
+> the network policy, and the per-visitor rate limit. That first bring-up used
+> images built on a laptop and loaded into k3s by hand.
+>
+> Since then, publishing and rollout have been automated (see "How a code change
+> reaches the site"). **That automation is built and its parts are unit tested, but
+> the whole loop (a push, a new image in ghcr.io, an automatic rollout on the VM)
+> has not been run end to end yet**: Argo CD is not installed on the VM, and the
+> visibility of the published packages has not been checked. Argo CD itself was run
+> on kind (`docs/argocd.md`), and an Oracle Cloud VM, which this guide used to
+> assume, was never tried. Cloud consoles change their menus often, so look for
+> settings by name.
 
 ## What you need
 
@@ -35,7 +41,9 @@ k3s API (6443), the kubelet (10250), 80 and 443 do not.
 - SSH access with a key, and `sudo`.
 - A domain whose DNS zone is on Cloudflare (a free Cloudflare account is enough).
   `redisoperator.dpdns.org` is a free `dpdns.org` subdomain delegated to Cloudflare.
-- Docker on your own machine, to build the images (option A in step 3).
+- A GitHub repository with Actions enabled. The workflow publishes images with the
+  repository's own token, so no personal access token is needed. Nothing has to be
+  built on your machine or on the VM.
 
 ## 1. The VM
 
@@ -64,32 +72,48 @@ On a shared machine leave it out and use `sudo k3s kubectl`.)
 k3s enforces NetworkPolicy, which the portal's protection relies on (see "Why the
 network policy matters").
 
-## 3. Images and manifests onto the VM
+## 3. Images and manifests
 
-The images are not published anywhere. Build them and put them into k3s directly,
-so no registry and no pull secret is needed.
+**The images are built and published by CI, so there is nothing to build or copy.**
+On every push to `main` that changes code, the Images workflow
+(`.github/workflows/images.yml`) builds the operator and the portal and pushes them
+to `ghcr.io/muditjain13/redis-operator` and `ghcr.io/muditjain13/redis-portal`, tagged
+with the full commit SHA. The hosted overlays name exactly those images, so the VM
+pulls them itself. Run the workflow once (push, or "Run workflow" on the Actions tab)
+before the first deploy, so the images exist.
 
-**Option A (tested): build on your machine, stream to the VM.**
+**The packages must be pullable without a login.** The VM pulls anonymously, which
+needs the two packages to be public. GitHub creates a new container package when the
+first image is pushed, and this guide has not yet checked whether it starts out
+public or private. Check under your profile, Packages, each package, Package
+settings; if it is private, change the visibility there (GitHub offers no API for
+that). If you would rather keep them private, the VM needs an image pull secret
+instead, which this setup does not use.
+
+Get the Redis images the buttons use onto the VM now, so the first click does not
+wait for a pull:
 
 ```sh
-docker build -t redis-operator:hosted .
-docker build -f Dockerfile.portal -t redis-portal:hosted .
-docker save redis-operator:hosted redis-portal:hosted | \
-  ssh you@vm 'sudo k3s ctr images import -'
-
-# The manifests, straight from git, so the VM needs no repository access.
-git archive HEAD deploy config | ssh you@vm 'mkdir -p ~/redis-operator && tar -x -C ~/redis-operator'
-
-# Pull the Redis images the buttons use now, so the first click does not wait.
 ssh you@vm 'sudo k3s crictl pull redis:7.2; sudo k3s crictl pull redis:7.4'
 ```
 
-The images must match the VM's architecture. Docker Desktop on x86 Windows builds
-`linux/amd64`, which matched this VM.
+The manifests are read from git, either by Argo CD (step 6) or, for a plain
+`kubectl` deploy, copied from a checkout without giving the VM repository access:
 
-**Option B (not tested): build on the VM.** Install Docker and git, give the VM a
-read-only deploy key (repository Settings, Deploy keys, no write access), clone, and
-run `bash hack/hosted-images.sh`, which builds and imports both images.
+```sh
+git archive HEAD deploy config | ssh you@vm 'mkdir -p ~/redis-operator && tar -x -C ~/redis-operator'
+```
+
+The image is built for `linux/amd64`, which matches this VM. For an arm64 VM (such as
+Oracle's Ampere shape) add `linux/arm64` to `platforms:` in the workflow.
+
+**The old manual method is no longer a valid fallback.** It was: build on a laptop,
+`docker save` the images, stream them into k3s with `ctr images import`, and restart
+the Deployments by hand. The overlays now name ghcr.io images at commit tags, so a
+locally built `redis-operator:hosted` is never used, and once Argo CD manages the
+deployment its self-heal reverts a hand-swapped image. If ghcr.io is unavailable, push
+the images to another registry and change `newName` and `newTag` in the two overlays
+(the workflow's script, `hack/set-image-tag.sh`, only accepts ghcr.io names).
 
 ## 4. The Cloudflare Tunnel
 
@@ -136,7 +160,9 @@ the `<id>.json` credentials file, or you cannot recreate the Secret.
 
 ## 5. Deploy
 
-On the VM, from the directory holding the manifests (all with `sudo k3s kubectl`):
+This is how the VM is brought up the first time; once Argo CD is installed (step 6),
+it does the same from git and keeps it current. The images come from ghcr.io (step
+3). On the VM, from the directory holding the manifests (all with `sudo k3s kubectl`):
 
 ```sh
 cd ~/redis-operator
@@ -164,24 +190,53 @@ cluster (never `cert.pem`). Within a few seconds the `cloudflared` logs show
 "Registered tunnel connection" lines, and `cloudflared tunnel info redis-operator-demo`
 lists the connector.
 
-## 6. Argo CD (optional, not run on the VM)
+## 6. Argo CD (what makes rollouts automatic; not installed on the VM yet)
 
-Instead of `kubectl apply`, Argo CD can deploy from the repository. It needs more
-memory than a 4 GB VM has to spare for the full install; `core-install.yaml` is
-lighter. The Applications are in `deploy/argocd/hosted/`.
+Argo CD is the part that notices the new image tag the workflow commits and applies
+it. Use the lighter `core-install.yaml` (no UI, no login), which a 4 GB VM can spare;
+the full install needs more memory. The Applications are in `deploy/argocd/hosted/`.
 
 ```sh
 kubectl create namespace argocd
 kubectl apply -n argocd --server-side --force-conflicts \
-  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.3/manifests/install.yaml
-kubectl -n argocd rollout status deployment/argocd-server --timeout=300s
+  -f https://raw.githubusercontent.com/argoproj/argo-cd/v3.5.3/manifests/core-install.yaml
+# A core install has no API server to create the "default" project, so define it.
+kubectl apply -f deploy/argocd/appproject.yaml
+kubectl apply -f deploy/argocd/hosted/
+kubectl -n argocd get applications -w
 ```
 
-Give Argo CD read access to the repository with a token, as in `docs/argocd.md`,
-then `kubectl apply -f deploy/argocd/hosted/`. Argo CD will take over the resources
-from step 5 without recreating them. The credentials Secret is not in git, so Argo
-CD neither stores nor prunes it. Keep the Argo CD UI private (an SSH tunnel, not
-through Cloudflare).
+The repository is public, so Argo CD needs no credentials to read it. For a private
+copy, give it a read-only token as in `docs/argocd.md`. Argo CD takes over the
+resources from step 5 without recreating them. The credentials Secret is not in git,
+so Argo CD neither stores nor prunes it. A core install has no UI to expose; the
+`kubectl` command above shows each Application's sync and health.
+
+## How a code change reaches the site
+
+Once steps 3 and 6 are in place, nobody runs a command to ship a change:
+
+1. **Push to `main`.** Pushes that only change `docs/`, Markdown files or `deploy/`
+   are skipped, because they cannot change what is inside an image.
+2. **The Images workflow builds both images** and pushes them to ghcr.io tagged with
+   the full commit SHA. Only this job can write packages.
+3. **Its last job commits the new tags.** `hack/set-image-tag.sh` rewrites the image
+   entry in `deploy/hosting/operator/kustomization.yaml` and
+   `deploy/hosting/portal/kustomization.yaml`, and the job pushes a commit called
+   "Update the hosted images to <short sha>" as `github-actions[bot]`. GitHub does not
+   start workflows for a push made with the workflow's own token, so that commit
+   cannot trigger another run, and it also gets no CI run of its own.
+4. **Argo CD applies it.** It polls the repository about every three minutes, sees the
+   commit, and the operator and portal Deployments (and the reset CronJob, which uses
+   the portal image) move to the new tag. The portal restarts with a brief gap,
+   because it runs as a single replica with the `Recreate` strategy.
+
+A second push while a run is still going replaces it, so the tags in git always end
+at the newest build. Nothing has timed this whole path yet; expect the build time
+plus up to about three minutes for Argo CD to notice.
+
+To roll back, revert the bot's commit, or run `hack/set-image-tag.sh` with an earlier
+commit SHA: the images for earlier commits stay in ghcr.io.
 
 ## 7. Check it
 
@@ -227,9 +282,16 @@ Cloudflare's edge answers it with a 403 (`error code: 1000`).
   "Platform portal"). A CronJob restores 3 replicas and Redis 7.2 every 10
   minutes.
 - **Secrets on the VM.** The k3s admin kubeconfig, the tunnel credentials file and
-  the Secret made from it, `cert.pem` if you keep it, and (with Argo CD) the Argo CD
-  admin password and repository token. None are in git. To revoke the tunnel,
-  delete it with `cloudflared tunnel delete redis-operator-demo`.
+  the Secret made from it, and `cert.pem` if you keep it. None are in git. The
+  repository is public and the images are pulled anonymously, so the VM holds no
+  repository token and no registry credential (a private copy of either would add
+  one). To revoke the tunnel, delete it with
+  `cloudflared tunnel delete redis-operator-demo`.
+- **What the publishing workflow can do.** It runs only for pushes to `main`, never
+  for pull requests. It uses the built-in token and no stored secret. The build job
+  can write packages but not the repository; the job that commits the tags can write
+  the repository but not packages; every action is pinned to a commit.
+  `deploy/ci/workflow_test.go` pins all of that.
 - **Keep it patched.** `sudo apt-get upgrade` regularly, or enable
   `unattended-upgrades`.
 - **Optional extra.** A Cloudflare rate-limiting or WAF rule in front of the
@@ -238,13 +300,17 @@ Cloudflare's edge answers it with a 403 (`error code: 1000`).
 
 ## Operating it
 
-- **Change manifests:** copy them again (`git archive HEAD deploy config | ssh ...`)
-  and `kubectl apply -k` the changed overlay, or push and let Argo CD do it (step 6).
-- **Change code:** rebuild and stream the images again (step 3), then restart the two
-  Deployments. The tag `hosted` does not change, so nothing can see a new image by
-  itself:
-  `kubectl -n redis-operator-system rollout restart deployment/redis-operator-controller-manager`
-  and `kubectl -n demo rollout restart deployment/redis-portal`.
+- **Change code:** push to `main`. The Images workflow, the tag commit and Argo CD do
+  the rest (see "How a code change reaches the site"). To check what is running:
+  `kubectl -n demo get deployment redis-portal -o jsonpath='{.spec.template.spec.containers[0].image}'`
+  prints the image, whose tag is the commit it was built from.
+- **Change manifests:** push to `main` and Argo CD applies them. Without Argo CD,
+  copy them again (`git archive HEAD deploy config | ssh ...`) and `kubectl apply -k`
+  the changed overlay.
+- **Rebuild without a code change:** run the Images workflow by hand from the Actions
+  tab ("Run workflow"). It builds the current `main` again and commits the tags.
+- **Do not edit the image tags in the two hosted overlays by hand.** The workflow owns
+  them and the next run overwrites your edit.
 - **Take it down:** `kubectl delete -k deploy/hosting/cloudflared`, then delete the
   tunnel (`cloudflared tunnel delete redis-operator-demo`) and the CNAME in the
   Cloudflare DNS dashboard.
@@ -253,7 +319,9 @@ Cloudflare's edge answers it with a 403 (`error code: 1000`).
 
 | Symptom | Likely cause |
 |---|---|
-| Operator or portal Pod `ErrImagePull` or `ImagePullBackOff` | The image was not imported. Run `sudo k3s ctr images ls` to look for `redis-operator:hosted` and `redis-portal:hosted`, then repeat step 3. |
+| Operator or portal Pod `ErrImagePull` or `ImagePullBackOff` | The Pod's image tag does not exist in ghcr.io (the Images run for that commit failed or never ran), or the package is private and the VM pulls anonymously. Check the Actions run and the package's visibility (step 3). `kubectl describe pod` shows the exact error. |
+| A code push did not change the site | Check the Images run on the Actions tab first. If it succeeded, check that it committed new tags (a commit by `github-actions[bot]`), then `kubectl -n argocd get applications` for sync errors. Pushes that touch only `docs/`, Markdown or `deploy/` deliberately build nothing. |
+| The Images run fails at "Log in" or "Build and push" with a permission error | The repository's Actions settings must allow the workflow to write packages. The workflow asks for `packages: write` in its build job only. |
 | `cloudflared` Pod `CreateContainerConfigError` | The `cloudflared-credentials` Secret does not exist yet. Create it (step 5); the Pod starts by itself. |
 | `cloudflared` `CrashLoopBackOff` | The credentials do not match `tunnel:` in the ConfigMap (a different tunnel, or one that was deleted). Check `kubectl -n cloudflared logs deploy/cloudflared`. |
 | Cloudflare error 1033 or 502 in the browser | The tunnel has no connector or cannot reach the portal. `cloudflared tunnel info redis-operator-demo` should list a connector; check that the hostname rule in the ConfigMap points to `redis-portal.demo.svc.cluster.local:80`. |
