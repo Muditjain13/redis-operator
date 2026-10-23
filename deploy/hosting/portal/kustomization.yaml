@@ -1,5 +1,10 @@
 # The portal on the hosted k3s VM: deploy/portal plus the three things that only
 # make sense when the portal is reached through Cloudflare.
+#
+# The image is the one the Images workflow published to ghcr.io for a commit.
+# That workflow rewrites the images entry below with hack/set-image-tag.sh, in a
+# commit of its own, and Argo CD rolls the new tag out. Do not edit it by hand.
+# The reset CronJob uses the same image, so it moves with the Deployment.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -9,7 +14,8 @@ resources:
 
 images:
   - name: redis-portal
-    newTag: hosted
+    newName: ghcr.io/muditjain13/redis-portal
+    newTag: "34db6a9f2425d87d4a38872738027635814411fd"
 
 patches:
   # Read the visitor address from CF-Connecting-IP, so the rate limit counts

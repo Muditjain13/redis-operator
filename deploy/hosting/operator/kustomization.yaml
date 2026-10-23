@@ -1,6 +1,7 @@
 # The operator on the hosted k3s VM. Same as deploy/operator; only the image
-# tag differs. `hack/hosted-images.sh` builds redis-operator:hosted on the VM and
-# imports it into k3s, so no registry is involved.
+# differs: it is the one the Images workflow published to ghcr.io for a commit.
+# That workflow rewrites the images entry below with hack/set-image-tag.sh, in a
+# commit of its own, and Argo CD rolls the new tag out. Do not edit it by hand.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
@@ -9,4 +10,5 @@ resources:
 
 images:
   - name: redis-operator
-    newTag: hosted
+    newName: ghcr.io/muditjain13/redis-operator
+    newTag: "34db6a9f2425d87d4a38872738027635814411fd"
