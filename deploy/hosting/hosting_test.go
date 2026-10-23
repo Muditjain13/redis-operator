@@ -149,18 +149,19 @@ func TestCloudflaredRoutesOnlyTheDemoHostnameToThePortal(t *testing.T) {
 	}
 }
 
-func TestCloudflaredKeepsItsCredentialsOutOfGit(t *testing.T) {
+// loadCloudflared returns the cloudflared Deployment, its pod spec and its one container.
+func loadCloudflared(t *testing.T) (appsv1.Deployment, corev1.PodSpec, corev1.Container) {
+	t.Helper()
 	d := load[appsv1.Deployment](t, "cloudflared/deployment.yaml")
-	cm := load[corev1.ConfigMap](t, "cloudflared/configmap.yaml")
-	var cfg tunnelConfig
-	if err := yaml.UnmarshalStrict([]byte(cm.Data["config.yaml"]), &cfg); err != nil {
-		t.Fatal(err)
-	}
 	pod := d.Spec.Template.Spec
 	if len(pod.Containers) != 1 {
 		t.Fatalf("%d containers, want 1", len(pod.Containers))
 	}
-	c := pod.Containers[0]
+	return d, pod, pod.Containers[0]
+}
+
+func TestCloudflaredKeepsItsCredentialsOutOfGit(t *testing.T) {
+	_, pod, c := loadCloudflared(t)
 
 	// No token or credential value may be written into the manifest.
 	for _, e := range c.Env {
@@ -193,6 +194,16 @@ func TestCloudflaredKeepsItsCredentialsOutOfGit(t *testing.T) {
 	if pod.SecurityContext == nil || pod.SecurityContext.FSGroup == nil || *pod.SecurityContext.FSGroup != 65532 {
 		t.Error("fsGroup must match the user, or the 0440 credentials file is unreadable")
 	}
+}
+
+func TestCloudflaredConfigMatchesTheMounts(t *testing.T) {
+	_, _, c := loadCloudflared(t)
+	cm := load[corev1.ConfigMap](t, "cloudflared/configmap.yaml")
+	var cfg tunnelConfig
+	if err := yaml.UnmarshalStrict([]byte(cm.Data["config.yaml"]), &cfg); err != nil {
+		t.Fatal(err)
+	}
+
 	mounts := map[string]string{}
 	for _, m := range c.VolumeMounts {
 		if !m.ReadOnly {
@@ -207,6 +218,10 @@ func TestCloudflaredKeepsItsCredentialsOutOfGit(t *testing.T) {
 	if !reflect.DeepEqual(c.Args, []string{"tunnel", "--config", mounts["config"] + "/config.yaml", "run"}) {
 		t.Errorf("args = %v, want tunnel --config <mount>/config.yaml run", c.Args)
 	}
+}
+
+func TestCloudflaredIsHardened(t *testing.T) {
+	d, pod, c := loadCloudflared(t)
 
 	if _, tag, ok := strings.Cut(c.Image, ":"); !ok || tag == "" || tag == "latest" {
 		t.Errorf("image %q must have a pinned tag", c.Image)
