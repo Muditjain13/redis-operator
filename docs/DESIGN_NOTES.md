@@ -572,7 +572,7 @@ Everything the README needs, with where to find it here:
 
 ## 17. Web UI dependency policy
 
-The web UI (`web/`) follows one rule for every npm package, direct or transitive, and has one documented exception.
+The web UI (`web/`) follows one rule for every npm package, direct or transitive. It has two documented exceptions, both security fixes taken sooner than the rule allows, and one security fix that was deliberately deferred.
 
 **The rule**
 - Use stable releases that have been published for **at least 28 days**.
@@ -584,6 +584,35 @@ The web UI (`web/`) follows one rule for every npm package, direct or transitive
 - `typescript` stays on 6.0.x: TypeScript 7 exists, but `typescript-eslint` declares support only for versions below 6.1.
 - `jsdom` is 29.x, not 30: jsdom 30 needs Node 24.15 or newer, which is not what the development machine runs, so it was not officially supported there.
 - `vitest` is 4.x, not 5: a judgement call. Vitest 5 was about six weeks old and still shipping patches every few days; 4.1.x is the mature final release of the previous major and declares support for Vite 8. The suite also passed on Vitest 5, so moving up later is low risk.
+
+
+**The exception: security patches from the original maintainer**
+`source-map-js` is pinned to **1.2.2** through an `overrides` entry in `web/package.json`, although 1.2.2 was released fewer than 28 days before it was adopted.
+- *Why:* `source-map-js` 1.0.0 to 1.2.1 allows an event-loop denial of service through indexed source-map section offsets (GHSA-68fv-2mgg-jv7q); 1.2.2 is the first patched release. `npm audit` flagged the older version as high severity.
+- *Why it is acceptable:* it is a security fix, published by the same sole maintainer and from the same repository as 1.2.1 (`7rulnik/source-map-js`, same licence), and the advisory itself points at that repository. The package is only reached through `jsdom` (via `css-tree`) and `vite` (via `postcss`), so it affects building and testing, not what browsers receive.
+- *Scope of the change:* exactly one package changed in the lockfile (1.2.1 to 1.2.2); nothing else was re-resolved.
+- *When to remove it:* once the version npm resolves for `css-tree` and `postcss` is 1.2.2 or newer without help, delete the `overrides` block. Until then it must stay, or the vulnerable 1.2.1 returns.
+
+**A second exception: `vite` 8.3.3**
+`vite` is pinned to **8.3.3** (published 6 October 2026), 15 days old when adopted on 21 October 2026, instead of 8.3.0.
+- *Why:* `npm audit` began reporting a high severity finding against `vite` 8.3.0 to 8.3.2. It is three advisories in `launch-editor`, published 20 October 2026: GHSA-698v-4r3x-3vcv (`%` is not escaped in command arguments on Windows, medium), GHSA-r825-w8mm-5pxw (an editor command-line flag can be misread, allowing command execution with some editors, medium) and GHSA-587h-7wmj-h5pm (a file existence check can be bypassed on Windows, high). All three are fixed in `launch-editor` 2.14.2. npm rates the package by its worst advisory, hence "high".
+- *Why it is dev-only:* `launch-editor` is what Vite's development server uses to open a file in your editor (for example from the error overlay). It is bundled inside Vite's own Node-side code (`vite/dist/node/chunks/node.js`) and is not a separate package in the tree, so only a newer `vite` fixes it. Checked: the production bundle (`web/dist`) and the copy embedded in the Go binary contain no mention of `launch-editor`, and the portal image runs a Go binary on `distroless/static`, which has no Node at all. Only someone running `npm run dev` on Windows was exposed.
+- *Why 8.3.3 is a legitimate release:* its release notes say "update launch-editor to v2.14.2", which is the patched version. npm shows it published through GitHub Actions trusted publishing (OIDC) by the same two maintainers as 8.3.0 (`yyx990803` and `vitebot`). Its signed SLSA provenance attestation names the `vitejs/vite` repository, workflow `.github/workflows/publish.yml`, ref `main` and commit `fea5b21dd952`, and that commit is "release: v8.3.3" in `vitejs/vite`. `npm audit signatures` verifies the registry signatures and attestations of the installed tree (243 and 97 packages respectively).
+- *Why it is acceptable:* 8.3.3 is the oldest release outside the affected range, so it is the least new version that clears the audit, and it comes from the original maintainers and repository as above.
+- *Why not 8.3.5, which `npm audit fix --force` suggests:* 8.3.5 is also genuine (same maintainers, same workflow, commit `981f07fa4580` is "release: v8.3.5"), but it adds nothing for this advisory, because the fix is already in 8.3.3. Moving to it from 8.3.3 changes 20 packages for no security gain: `vite` 8.3.5, `rolldown` 1.2.15 (published the day before), `@oxc-project/types` 0.155.0 (3 days old), `postcss` 8.5.31, `nanoid` 3.3.20 and the 15 `rolldown` platform bindings. That is exactly the kind of fresh transitive churn the 28 day rule exists to avoid.
+- *What `npm audit fix --force` would have changed from the original 8.3.0 tree* (simulated in a scratch copy, not applied): no major version bump, and it rewrites `package.json` with new exact pins for two packages, `vite` 8.3.0 to 8.3.5 and `vitest` 4.1.11 to 4.1.12 (outside the stated range only because the versions are pinned exactly). It also moves 30 packages in the lockfile, including `rolldown` 1.2.9 to 1.2.15, `postcss`, `nanoid`, `chai` and `tinyrainbow`. `--force` ignores the 28 day rule, so the manual route above was used instead.
+- *Scope of the change:* `vite` plus the two packages it pulls with it. Its declared range is `rolldown ~1.2.11`, and a plain install resolved `rolldown` 1.2.15 (published the same day) and `@oxc-project/types` 0.155.0. Those entries were removed from the lockfile and resolved again with `--before=2026-09-25`, which gave `rolldown` 1.2.11 (27 days old) and `@oxc-project/types` 0.151.0 (30 days old), so only `vite` itself is under 28 days. The rolldown platform bindings moved with it.
+- *Checks after the change* (22 October 2026, with `vite` 8.3.3 installed): `npm run build` (the built file names match the bundle deployed to the cluster), `npm run lint` and `npm run typecheck` clean, `npm test` 73 passed, and `make test` and `make lint` on the Go side passed with 0 issues. Nothing on the Go side, in the Makefile, the Dockerfile or the workflows refers to Vite.
+- *When it stops being an exception:* on 3 November 2026, when 8.3.3 turns 28 days old. Nothing needs removing; this entry only records why the pin is newer than the rule for those days.
+
+**Deferred: `vitest` 4.1.12 (found 22 October 2026, not applied)**
+`npm audit` reports two moderate advisories against `@vitest/mocker`, and so against `vitest`, in the pinned 4.1.11: GHSA-qxg6-89mg-rqv8 (code injection through unauthenticated manual mock registration) and GHSA-xp26-3454-mjgp (a Windows backslash path bypasses the mocker's redirect allowlist). Both were published on 21 October 2026 and are fixed in `@vitest/mocker` 4.1.12.
+- *Decision:* deferred, and not taken as an exception. The fix is only 7 days old, the severity is moderate, and the real exposure is judged low (see below), so waiting costs little. **Revisit on 12 November 2026**, when `vitest` 4.1.12 turns 28 days old (it was published on 15 October; the rule counts the age of the package version, not of the advisory). `chai` 6.3.0 and `tinyrainbow` 3.2.0, published on 30 September, clear the rule on 28 October. On the revisit date, apply it as an ordinary update with no exception. Apply it sooner, as a security exception like `source-map-js` and `vite`, only if a more severe advisory appears or the issue turns out to reach our setup.
+- *The fix is genuine:* `vitest` 4.1.12 was published on 15 October 2026 through GitHub Actions trusted publishing, with an approving maintainer, and its provenance attestation names `vitest-dev/vitest`, workflow `.github/workflows/publish.yml`.
+- *What applying it would move* (simulated in a scratch copy): 10 packages and no major bump. These are `vitest` and its `@vitest/*` packages from 4.1.11 to 4.1.12, `chai` 6.2.2 to 6.3.0 and `tinyrainbow` 3.1.1 to 3.2.0. The simulated audit afterwards shows 0 vulnerabilities. `vitest` is 7 days old and `chai` and `tinyrainbow` are 22 days old, so all three are under the 28 day rule.
+- *Exposure:* judged low, not measured. The tests run with `vitest run` in a jsdom environment, without the browser mode or the Vitest UI server, and the test runner is a development dependency that is never part of the production bundle or the portal image. CI does not run `npm audit`, so the open finding does not fail any workflow.
+
+Any future exception should be recorded here in the same form: what, why, why acceptable, and when to remove it.
 
 
 ## 18. Troubleshooting: intermittent Docker pull failures on Windows
