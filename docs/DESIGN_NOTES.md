@@ -18,13 +18,12 @@ Contents
 12. [CI, badges and measurements](#12-ci-badges-and-measurements)
 13. [Local development, quickstart and demo](#13-local-development-quickstart-and-demo)
 14. [Key points from each build phase](#14-key-points-from-each-build-phase)
-15. [Known limitations and future work](#16-known-limitations-and-future-work)
-16. [README checklist](#17-readme-checklist)
-17. [Web UI dependency policy](#17-web-ui-dependency-policy)
-18. [Troubleshooting: intermittent Docker pull failures on Windows](#18-Troubleshooting:-intermittent-docker-pull-failures-on-windows)
-19. [Platform portal](#19-platform-portal)
-20. [GitOps with Argo CD ](#20-gitOps-with-argo-cd)
-21. [Hosting and development environment] (#21-hosting-and-development-environment)
+15. [Known limitations and future work](#15-known-limitations-and-future-work)
+16. [Web UI dependency policy](#16-web-ui-dependency-policy)
+17. [Troubleshooting: intermittent Docker pull failures on Windows](#17-troubleshooting-intermittent-docker-pull-failures-on-windows)
+18. [Platform portal](#18-platform-portal)
+19. [GitOps with Argo CD](#19-gitops-with-argo-cd)
+20. [Hosting and development environment](#20-hosting-and-development-environment)
 
 
 
@@ -550,27 +549,7 @@ Reasonable next steps, in rough order of value: progress deadline condition; rep
 
 
 
-## 16. README checklist
-
-Everything the README needs, with where to find it here:
-
-- [ ] Title, one-line description, badges (section 12.2 URL pattern; badges: operator reaction, full recovery (3 pods), rolling upgrade, kubernetes, envtest specs, go report, codecov, plus license; show the two recovery badges next to each other and link section 12.5's explanation)
-- [ ] What an operator is (section 4)
-- [ ] Architecture diagram (section 5.2) and short component description (5.1)
-- [ ] How reconcile works (section 7, flow diagram 5.3)
-- [ ] Quickstart on kind (section 13.3)
-- [ ] Demo steps and sample events (section 13.4); a recording if available
-- [ ] CRD reference (section 6)
-- [ ] Design decisions and trade-offs (section 8)
-- [ ] Failure modes (section 9)
-- [ ] Testing approach (section 11)
-- [ ] Production-readiness notes and honest gaps (section 10)
-- [ ] Limitations and roadmap (section 15)
-- [ ] Contributing / development notes (section 13.5, only if wanted)
-- [ ] License: Apache 2.0
-- [ ] Do **not** type measured numbers into prose; link badges. If a number must appear, state that it is measured by CI.
-
-## 17. Web UI dependency policy
+## 16. Web UI dependency policy
 
 The web UI (`web/`) follows one rule for every npm package, direct or transitive. It has two documented exceptions, both security fixes taken sooner than the rule allows, and one security fix that was deliberately deferred.
 
@@ -615,7 +594,7 @@ The web UI (`web/`) follows one rule for every npm package, direct or transitive
 Any future exception should be recorded here in the same form: what, why, why acceptable, and when to remove it.
 
 
-## 18. Troubleshooting: intermittent Docker pull failures on Windows
+## 17. Troubleshooting: intermittent Docker pull failures on Windows
 
 Observed on the Windows 11 development machine with Docker Desktop 4.95 (WSL2 backend). It is a local problem and does not affect CI.
 
@@ -651,7 +630,7 @@ Observed on the Windows 11 development machine with Docker Desktop 4.95 (WSL2 ba
 
 **Related symptom.** `go mod download` inside `docker build` sometimes fails with `remote error: tls: protocol version not supported` from `proxy.golang.org`. A retry succeeds, so the same workaround applies.
 
-## 19. Platform portal
+## 18. Platform portal
 
 A live demo page for the operator. It shows the RedisCluster's Pods and the operator's events as they change, lets a visitor break things with five buttons, and reports how many seconds each recovery took. Hosting is covered in section 22.
 
@@ -674,7 +653,7 @@ A live demo page for the operator. It shows the RedisCluster's Pods and the oper
 
 **Verified live on kind.** The deployed portal scaled the cluster to 5 under its restricted ServiceAccount, a second action inside the cooldown returned 429, a request without the header returned 403, and the reset job restored a cluster changed to 5 replicas and 7.4, then did nothing on a second run.
 
-## 20. GitOps with Argo CD
+## 19. GitOps with Argo CD
 
 Argo CD deploys the operator and the portal from this repository. Setup, the private-repository token and the demo are in `docs/argocd.md`.
 
@@ -706,7 +685,7 @@ They never fight because they own different objects. The one place they touch is
 - `core-install.yaml` has no API server, and the `default` AppProject is created by the API server, so both Applications sat at `Unknown` with "project default which does not exist". `deploy/argocd/appproject.yaml` defines it (the same permissive spec Argo CD creates, so it changes nothing on a full install). After adding it, an already-created Application needs a refresh (`argocd.argoproj.io/refresh=hard` annotation) or a few minutes before it notices.
 - kubectl warns that the Argo CD finalizer name should be domain-qualified. It is the name Argo CD documents, so it is kept.
 
-## 21. Hosting and development environment
+## 20. Hosting and development environment
 
 **Hosting (`docs/hosting.md`, `deploy/hosting/`, `deploy/argocd/hosted/`).** The same two Applications plus a third for `cloudflared`, run on one Oracle Cloud Always Free VM with k3s.
 - **Overlays, not copies.** `deploy/hosting/operator` and `deploy/hosting/portal` reuse the base kustomizations and change only what hosting changes: the image tag, and for the portal the `--trust-proxy-headers` flag and a NetworkPolicy. The hosted Applications point at those overlays.

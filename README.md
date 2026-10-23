@@ -83,9 +83,9 @@ The demo lets strangers on the internet delete things in a Kubernetes cluster, s
 - **Rate limiting and abuse controls.** One action per visitor every 30 seconds, counted per real client address (IPv6 per /64, so rotating through a prefix does not help). Every state-changing request needs a header a browser will not add to a cross-site form, there is no free-text input anywhere, and the page is served with a strict Content-Security-Policy.
 - **Hardened containers.** Non-root, read-only filesystem, all capabilities dropped, no privilege escalation, resource limits.
 - **No inbound ports and no secrets in git.** The VM exposes only SSH; traffic arrives through an outbound Cloudflare Tunnel. The tunnel's credentials live in a Kubernetes Secret created by hand. The Cloudflare origin certificate, which can manage the whole DNS zone, is kept off the cluster and was deleted from the VM once the tunnel existed.
-- **A written dependency policy.** Web dependencies must be stable releases at least 28 days old, pinned to exact versions with a committed lockfile, and installed with `npm ci` in CI, which lowers the chance of picking up a freshly published bad release. The reasoning is in [`DESIGN_NOTES.md`, section 17](docs/DESIGN_NOTES.md#17-web-ui-dependency-policy).
+- **A written dependency policy.** Web dependencies must be stable releases at least 28 days old, pinned to exact versions with a committed lockfile, and installed with `npm ci` in CI, which lowers the chance of picking up a freshly published bad release. The reasoning is in [`DESIGN_NOTES.md`, section 16](docs/DESIGN_NOTES.md#16-web-ui-dependency-policy).
 
-More detail: [portal security model](docs/DESIGN_NOTES.md#19-platform-portal).
+More detail: [portal security model](docs/DESIGN_NOTES.md#18-platform-portal).
 
 ## Quick start
 
@@ -124,7 +124,7 @@ Run the checks with `make test` (envtest suite), `make lint` and `make test-e2e`
 
 This README stays short on purpose. The deeper reading:
 
-- [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md): the architecture and reconcile flow ([section 5](docs/DESIGN_NOTES.md#5-architecture)), design decisions and failure modes, the testing strategy, CI and measurements, the portal ([section 19](docs/DESIGN_NOTES.md#19-platform-portal)) and GitOps with Argo CD ([section 20](docs/DESIGN_NOTES.md#20-gitops-with-argo-cd)).
+- [`docs/DESIGN_NOTES.md`](docs/DESIGN_NOTES.md): the architecture and reconcile flow ([section 5](docs/DESIGN_NOTES.md#5-architecture)), design decisions and failure modes, the testing strategy, CI and measurements, the portal ([section 18](docs/DESIGN_NOTES.md#18-platform-portal)) and GitOps with Argo CD ([section 19](docs/DESIGN_NOTES.md#19-gitops-with-argo-cd)).
 - [`docs/hosting.md`](docs/hosting.md): how the live demo is hosted on one VM with k3s and a Cloudflare Tunnel, as it was actually run.
 - [`docs/argocd.md`](docs/argocd.md): deploying with Argo CD, including read access to a private repository.
 
