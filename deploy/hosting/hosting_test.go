@@ -72,13 +72,13 @@ func TestPortalOverlayOnlyAdmitsCloudflared(t *testing.T) {
 	}
 }
 
-func TestPortalOverlayTurnsOnProxyHeadersAndUsesTheHostedImage(t *testing.T) {
+func TestPortalOverlayTurnsOnProxyHeaders(t *testing.T) {
 	data, err := os.ReadFile("portal/kustomization.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	k := string(data)
-	for _, want := range []string{"--trust-proxy-headers", "networkpolicy.yaml", "../../portal", "newTag: hosted"} {
+	for _, want := range []string{"--trust-proxy-headers", "networkpolicy.yaml", "../../portal"} {
 		if !strings.Contains(k, want) {
 			t.Errorf("portal/kustomization.yaml lacks %q", want)
 		}
@@ -93,12 +93,14 @@ func TestPortalOverlayTurnsOnProxyHeadersAndUsesTheHostedImage(t *testing.T) {
 	}
 }
 
-func TestOperatorOverlayUsesTheHostedImage(t *testing.T) {
+// The images of both overlays are checked in deploy/ci, next to the workflow
+// that writes them.
+func TestOperatorOverlayBuildsOnTheOperatorBase(t *testing.T) {
 	data, err := os.ReadFile("operator/kustomization.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "newTag: hosted") || !strings.Contains(string(data), "../../operator") {
+	if !strings.Contains(string(data), "../../operator") {
 		t.Errorf("operator overlay = %s", data)
 	}
 }
