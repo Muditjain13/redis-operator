@@ -24,13 +24,15 @@ k3s API (6443), the kubelet (10250), 80 and 443 do not.
 > images built on a laptop and loaded into k3s by hand.
 >
 > Since then, publishing and rollout have been automated (see "How a code change
-> reaches the site"). **That automation is built and its parts are unit tested, but
-> the whole loop (a push, a new image in ghcr.io, an automatic rollout on the VM)
-> has not been run end to end yet**: Argo CD is not installed on the VM, and the
-> visibility of the published packages has not been checked. Argo CD itself was run
-> on kind (`docs/argocd.md`), and an Oracle Cloud VM, which this guide used to
-> assume, was never tried. Cloud consoles change their menus often, so look for
-> settings by name.
+> reaches the site"). **The publishing half has run for real** (checked on 23
+> October 2026): a push to `main` built both images, pushed them to ghcr.io, where
+> they can be pulled without a login, and the workflow committed the new tags into
+> the two hosted overlays. **The last step has not run: Argo CD is not installed on
+> the VM**, so nothing has rolled those images out, the VM still runs the images
+> that were loaded by hand, and no push has been followed all the way to a rollout.
+> Argo CD itself was run on kind (`docs/argocd.md`), and an Oracle Cloud VM, which
+> this guide used to assume, was never tried. Cloud consoles change their menus
+> often, so look for settings by name.
 
 ## What you need
 
@@ -83,12 +85,12 @@ pulls them itself. Run the workflow once (push, or "Run workflow" on the Actions
 before the first deploy, so the images exist.
 
 **The packages must be pullable without a login.** The VM pulls anonymously, which
-needs the two packages to be public. GitHub creates a new container package when the
-first image is pushed, and this guide has not yet checked whether it starts out
-public or private. Check under your profile, Packages, each package, Package
-settings; if it is private, change the visibility there (GitHub offers no API for
-that). If you would rather keep them private, the VM needs an image pull secret
-instead, which this setup does not use.
+needs the two packages to be public. For this repository they were public when
+checked on 23 October 2026: an anonymous request to ghcr.io for each image succeeded.
+This guide does not know whether GitHub made them public itself or someone changed
+them. If a package is private for you, change the visibility under your profile,
+Packages, the package, Package settings (GitHub offers no API for that), or give the
+VM an image pull secret instead, which this setup does not use.
 
 Get the Redis images the buttons use onto the VM now, so the first click does not
 wait for a pull:

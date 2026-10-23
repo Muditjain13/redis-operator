@@ -131,7 +131,7 @@ This README stays short on purpose. The deeper reading:
 
 What is genuinely not done yet:
 
-- **Argo CD on the hosted VM, and a first end-to-end run of the automated rollout.** CI now builds both images, publishes them to ghcr.io tagged with the commit SHA, and commits the new tags into the hosted overlays ([how it works](docs/hosting.md#how-a-code-change-reaches-the-site)). The last step, Argo CD noticing that commit and rolling it out, is written and was run on a local kind cluster, but Argo CD is not installed on the VM yet. So the live demo still runs images that were loaded by hand, and the whole push-to-rollout loop has not been run end to end.
+- **Argo CD on the hosted VM, and a first end-to-end run of the automated rollout.** CI now builds both images, publishes them to ghcr.io tagged with the commit SHA, and commits the new tags into the hosted overlays ([how it works](docs/hosting.md#how-a-code-change-reaches-the-site)); that half has run for real. The last step, Argo CD noticing that commit and rolling it out, is written and was run on a local kind cluster, but Argo CD is not installed on the VM yet. So the live demo still runs images that were loaded by hand, and no push has yet been followed all the way to a rollout.
 
 The operator itself is deliberately a demo-scale operator: Redis replicas are independent servers (no replication) and Redis has no authentication or TLS. The full list of known limits is in [`DESIGN_NOTES.md`, section 15](docs/DESIGN_NOTES.md#15-known-limitations-and-future-work).
 
