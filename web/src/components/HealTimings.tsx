@@ -12,7 +12,7 @@ const SHOWN = 8;
 export function HealTimings({ heals, now }: Props) {
   return (
     <section aria-labelledby="heals-heading">
-      <h2 id="heals-heading">How long it took</h2>
+      <h2 id="heals-heading">Recent time taken across globe</h2>
       {heals.length === 0 ? (
         <p className="muted">Run an action to see how long the cluster takes to settle.</p>
       ) : (
