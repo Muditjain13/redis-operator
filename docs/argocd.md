@@ -35,8 +35,11 @@ repo server, Redis; no UI or login), which fits on a laptop. For the UI use
 `kubectl -n argocd port-forward svc/argocd-server 8443:443`. The initial admin
 password is in the `argocd-initial-admin-secret` Secret.
 
-The images are built locally and loaded into kind (`redis-operator:dev`,
-`redis-portal:dev`); nothing is pulled from a registry for them.
+On kind the images are built locally and loaded into the cluster
+(`redis-operator:dev`, `redis-portal:dev`); nothing is pulled from a registry for
+them. The hosted VM works differently: it pulls images that CI built and published
+to ghcr.io, and Argo CD rolls out the new tag CI commits (`docs/hosting.md`, "How a
+code change reaches the site").
 
 ## Giving Argo CD read access to a private repository
 
