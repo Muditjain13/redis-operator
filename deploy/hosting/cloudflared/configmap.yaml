@@ -1,0 +1,22 @@
+# Routing for the named tunnel redis-operator-demo. Nothing here is secret: the
+# tunnel ID and the public hostname are visible in DNS. The credentials file
+# lives in a Secret (see deployment.yaml).
+#
+# Only the demo hostname is routed, and only to the portal Service. Anything
+# else that reaches the tunnel gets a 404, so the tunnel is not an open door
+# into the cluster.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: cloudflared
+data:
+  config.yaml: |
+    tunnel: cddf6db5-37a2-460f-afb0-e85a86b6e7df
+    credentials-file: /etc/cloudflared/credentials/credentials.json
+    no-autoupdate: true
+    metrics: 0.0.0.0:2000
+    ingress:
+      - hostname: redisoperator.dpdns.org
+        service: http://redis-portal.demo.svc.cluster.local:80
+      - service: http_status:404

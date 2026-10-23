@@ -1,11 +1,13 @@
 # Cloudflare Tunnel connector. It dials out to Cloudflare, so the VM needs no
-# open inbound port. Cloudflare sends visitors down the tunnel to the portal
-# Service; the hostname-to-Service mapping is set in the Cloudflare dashboard
-# (see docs/hosting.md).
+# open inbound port. Cloudflare sends visitors for redisoperator.dpdns.org down
+# the tunnel to the portal Service; the routing is in configmap.yaml.
 #
-# The tunnel token is a credential and is NOT in git. Create the Secret by hand:
-#   kubectl -n cloudflared create secret generic cloudflared-token \
-#     --from-literal=token=<tunnel token>
+# The tunnel's credentials file is a secret and is NOT in git. Create the
+# Secret by hand from the file `cloudflared tunnel create` wrote:
+#   kubectl -n cloudflared create secret generic cloudflared-credentials \
+#     --from-file=credentials.json=$HOME/.cloudflared/<tunnel-id>.json
+# The origin certificate (cert.pem) is not needed here and must stay off the
+# cluster: it can create tunnels and DNS records for the whole zone.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -29,6 +31,8 @@ spec:
         runAsNonRoot: true
         runAsUser: 65532
         runAsGroup: 65532
+        # Lets the non-root user read the 0440 credentials file.
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -36,19 +40,19 @@ spec:
           image: cloudflare/cloudflared:2026.9.3
           args:
             - tunnel
-            - --no-autoupdate
-            - --metrics
-            - 0.0.0.0:2000
+            - --config
+            - /etc/cloudflared/config/config.yaml
             - run
-          env:
-            - name: TUNNEL_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: cloudflared-token
-                  key: token
           ports:
             - name: metrics
               containerPort: 2000
+          volumeMounts:
+            - name: config
+              mountPath: /etc/cloudflared/config
+              readOnly: true
+            - name: credentials
+              mountPath: /etc/cloudflared/credentials
+              readOnly: true
           livenessProbe:
             httpGet:
               path: /ready
@@ -68,3 +72,11 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: cloudflared-config
+        - name: credentials
+          secret:
+            secretName: cloudflared-credentials
+            defaultMode: 0440
