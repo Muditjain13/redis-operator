@@ -103,28 +103,109 @@ func TestOperatorOverlayUsesTheHostedImage(t *testing.T) {
 	}
 }
 
-func TestCloudflaredKeepsItsTokenOutOfGit(t *testing.T) {
+// tunnelConfig is the part of cloudflared's config.yaml the tests look at.
+type tunnelConfig struct {
+	Tunnel          string `json:"tunnel"`
+	CredentialsFile string `json:"credentials-file"`
+	NoAutoupdate    bool   `json:"no-autoupdate"`
+	Metrics         string `json:"metrics"`
+	Ingress         []struct {
+		Hostname string `json:"hostname"`
+		Service  string `json:"service"`
+	} `json:"ingress"`
+}
+
+func TestCloudflaredRoutesOnlyTheDemoHostnameToThePortal(t *testing.T) {
+	cm := load[corev1.ConfigMap](t, "cloudflared/configmap.yaml")
+	var cfg tunnelConfig
+	if err := yaml.UnmarshalStrict([]byte(cm.Data["config.yaml"]), &cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(cfg.Tunnel) != 36 || strings.Count(cfg.Tunnel, "-") != 4 {
+		t.Errorf("tunnel = %q, want the tunnel's UUID", cfg.Tunnel)
+	}
+	// Exactly one named route, then a catch-all that refuses everything else.
+	// Without the catch-all, anything reaching the tunnel could be proxied.
+	if len(cfg.Ingress) != 2 {
+		t.Fatalf("ingress = %+v, want one hostname rule and a 404 catch-all", cfg.Ingress)
+	}
+	if got := cfg.Ingress[0]; got.Hostname != "redisoperator.dpdns.org" ||
+		got.Service != "http://redis-portal.demo.svc.cluster.local:80" {
+		t.Errorf("first rule = %+v, want redisoperator.dpdns.org to the portal Service", got)
+	}
+	if got := cfg.Ingress[1]; got.Hostname != "" || got.Service != "http_status:404" {
+		t.Errorf("last rule = %+v, want a catch-all returning 404", got)
+	}
+	if !cfg.NoAutoupdate {
+		t.Error("a container must not update itself in place")
+	}
+
+	// The ConfigMap is in git, so it must hold no credential material.
+	for _, banned := range []string{"AccountTag", "TunnelSecret", "TunnelID", "BEGIN ARGO TUNNEL TOKEN"} {
+		if strings.Contains(cm.Data["config.yaml"], banned) {
+			t.Errorf("config.yaml contains %q, which belongs in the Secret only", banned)
+		}
+	}
+}
+
+func TestCloudflaredKeepsItsCredentialsOutOfGit(t *testing.T) {
 	d := load[appsv1.Deployment](t, "cloudflared/deployment.yaml")
+	cm := load[corev1.ConfigMap](t, "cloudflared/configmap.yaml")
+	var cfg tunnelConfig
+	if err := yaml.UnmarshalStrict([]byte(cm.Data["config.yaml"]), &cfg); err != nil {
+		t.Fatal(err)
+	}
 	pod := d.Spec.Template.Spec
 	if len(pod.Containers) != 1 {
 		t.Fatalf("%d containers, want 1", len(pod.Containers))
 	}
 	c := pod.Containers[0]
 
-	var token *corev1.EnvVar
-	for i := range c.Env {
-		if c.Env[i].Name == "TUNNEL_TOKEN" {
-			token = &c.Env[i]
+	// No token or credential value may be written into the manifest.
+	for _, e := range c.Env {
+		if e.Value != "" && strings.Contains(strings.ToUpper(e.Name), "TOKEN") {
+			t.Errorf("env %s has a literal value", e.Name)
+		}
+	}
+
+	// The credentials file comes from a Secret, at the path config.yaml names.
+	var secretVol, configVol *corev1.Volume
+	for i := range pod.Volumes {
+		switch pod.Volumes[i].Name {
+		case "credentials":
+			secretVol = &pod.Volumes[i]
+		case "config":
+			configVol = &pod.Volumes[i]
 		}
 	}
 	switch {
-	case token == nil:
-		t.Fatal("TUNNEL_TOKEN is not set")
-	case token.Value != "":
-		t.Error("TUNNEL_TOKEN has a literal value; it must come from a Secret")
-	case token.ValueFrom == nil || token.ValueFrom.SecretKeyRef == nil ||
-		token.ValueFrom.SecretKeyRef.Name != "cloudflared-token" || token.ValueFrom.SecretKeyRef.Key != "token":
-		t.Errorf("TUNNEL_TOKEN comes from %+v, want Secret cloudflared-token key token", token.ValueFrom)
+	case secretVol == nil || secretVol.Secret == nil:
+		t.Fatal("no credentials volume backed by a Secret")
+	case secretVol.Secret.SecretName != "cloudflared-credentials":
+		t.Errorf("credentials Secret = %q, want cloudflared-credentials", secretVol.Secret.SecretName)
+	case secretVol.Secret.DefaultMode == nil || *secretVol.Secret.DefaultMode != 0o440:
+		t.Errorf("credentials file mode = %v, want 0440 (readable by the pod's group only)", secretVol.Secret.DefaultMode)
+	}
+	if configVol == nil || configVol.ConfigMap == nil || configVol.ConfigMap.Name != "cloudflared-config" {
+		t.Errorf("config volume = %+v, want ConfigMap cloudflared-config", configVol)
+	}
+	if pod.SecurityContext == nil || pod.SecurityContext.FSGroup == nil || *pod.SecurityContext.FSGroup != 65532 {
+		t.Error("fsGroup must match the user, or the 0440 credentials file is unreadable")
+	}
+	mounts := map[string]string{}
+	for _, m := range c.VolumeMounts {
+		if !m.ReadOnly {
+			t.Errorf("mount %s is writable", m.Name)
+		}
+		mounts[m.Name] = m.MountPath
+	}
+	if want := "/etc/cloudflared/credentials/credentials.json"; cfg.CredentialsFile != want ||
+		!strings.HasPrefix(cfg.CredentialsFile, mounts["credentials"]+"/") {
+		t.Errorf("config says credentials-file %q, mount is %q", cfg.CredentialsFile, mounts["credentials"])
+	}
+	if !reflect.DeepEqual(c.Args, []string{"tunnel", "--config", mounts["config"] + "/config.yaml", "run"}) {
+		t.Errorf("args = %v, want tunnel --config <mount>/config.yaml run", c.Args)
 	}
 
 	if _, tag, ok := strings.Cut(c.Image, ":"); !ok || tag == "" || tag == "latest" {
