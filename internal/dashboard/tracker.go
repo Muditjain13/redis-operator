@@ -22,7 +22,8 @@ import (
 	"time"
 )
 
-// maxHistory is how many finished operations are remembered.
+// maxHistory is how many finished operations are remembered. The history is
+// global, not per visitor: every visitor sees every visitor's actions.
 const maxHistory = 20
 
 // ErrBusy means another action is still settling.
