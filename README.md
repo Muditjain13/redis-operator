@@ -26,12 +26,11 @@
 
 Press one of five buttons to break the running cluster (kill a Pod, delete the StatefulSet, scale up, scale back, upgrade Redis), watch the operator and Kubernetes repair it, and read the measured recovery time. The page resets itself every 10 minutes, and each visitor can run one action every 30 seconds.
 
-<!-- Screenshots and the GIF go here. Once the files exist, delete this opening comment
-     line and the closing comment line so the images show.
 ![Pressing a button and watching the cluster recover](docs/assets/demo.gif)
+
 ![The portal at rest: three Redis Pods, all Ready](docs/assets/portal-ui.png)
+
 ![The five action buttons](docs/assets/portal-buttons.png)
--->
 
 ## How it works
 
