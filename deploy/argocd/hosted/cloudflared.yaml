@@ -1,5 +1,5 @@
-# Hosted k3s VM: the Cloudflare Tunnel connector. Its token Secret is created by
-# hand and is not in git, so Argo CD neither stores nor prunes it.
+# Hosted k3s VM: the Cloudflare Tunnel connector. Its credentials Secret is
+# created by hand and is not in git, so Argo CD neither stores nor prunes it.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
