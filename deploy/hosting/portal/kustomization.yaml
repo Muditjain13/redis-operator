@@ -15,7 +15,7 @@ resources:
 images:
   - name: redis-portal
     newName: ghcr.io/muditjain13/redis-portal
-    newTag: "d9499669b7fb6056a96ba597911719deaca8069a"
+    newTag: "1b2c07de1706fb6dfc0c012fd3225f232ae56630"
 
 patches:
   # Read the visitor address from CF-Connecting-IP, so the rate limit counts
