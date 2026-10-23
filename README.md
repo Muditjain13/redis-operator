@@ -117,7 +117,7 @@ Run the checks with `make test` (envtest suite), `make lint` and `make test-e2e`
 | Tests | Ginkgo and Gomega with envtest, end-to-end on kind, Codecov |
 | Delivery | Kustomize, Argo CD (Applications for kind and for the hosted VM) |
 | Hosting | k3s on one small VM, Cloudflare Tunnel (`cloudflared`) |
-| CI | GitHub Actions, Go Report Card, measured badges on an orphan `badges` branch |
+| CI | GitHub Actions (tests, lint, end-to-end, and image publishing to ghcr.io), Go Report Card, measured badges on an orphan `badges` branch |
 
 ## Architecture
 
@@ -131,8 +131,7 @@ This README stays short on purpose. The deeper reading:
 
 What is genuinely not done yet:
 
-- **Argo CD on the hosted VM.** The Applications are written and were run on a local kind cluster, but the live demo was deployed with `kubectl apply`. Running Argo CD on the VM is the next step.
-- **Images are built locally, not on the VM.** They are built on a developer machine and streamed into k3s, with no registry and an unchanging `hosted` tag, so a code change means a rebuild and a rollout restart. Versioned published images, or building on the VM, would remove that.
+- **Argo CD on the hosted VM, and a first end-to-end run of the automated rollout.** CI now builds both images, publishes them to ghcr.io tagged with the commit SHA, and commits the new tags into the hosted overlays ([how it works](docs/hosting.md#how-a-code-change-reaches-the-site)). The last step, Argo CD noticing that commit and rolling it out, is written and was run on a local kind cluster, but Argo CD is not installed on the VM yet. So the live demo still runs images that were loaded by hand, and the whole push-to-rollout loop has not been run end to end.
 
 The operator itself is deliberately a demo-scale operator: Redis replicas are independent servers (no replication) and Redis has no authentication or TLS. The full list of known limits is in [`DESIGN_NOTES.md`, section 15](docs/DESIGN_NOTES.md#15-known-limitations-and-future-work).
 
