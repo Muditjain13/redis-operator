@@ -24,14 +24,15 @@ k3s API (6443), the kubelet (10250), 80 and 443 do not.
 > images built on a laptop and loaded into k3s by hand.
 >
 > Since then, publishing and rollout have been automated (see "How a code change
-> reaches the site"). **The publishing half has run for real** (checked on 23
-> October 2026): a push to `main` built both images, pushed them to ghcr.io, where
-> they can be pulled without a login, and the workflow committed the new tags into
-> the two hosted overlays. **The last step has not run: Argo CD is not installed on
-> the VM**, so nothing has rolled those images out, the VM still runs the images
-> that were loaded by hand, and no push has been followed all the way to a rollout.
-> Argo CD itself was run on kind (`docs/argocd.md`), and an Oracle Cloud VM, which
-> this guide used to assume, was never tried. Cloud consoles change their menus
+> reaches the site"), and **the whole loop has run for real** on the same day. Argo
+> CD (core install) was installed on the VM, took over the hand-deployed resources
+> in about 30 seconds and moved the operator, portal and reset job onto the
+> published images without touching the Redis Pods or the tunnel. Then a one-line
+> code change was pushed to `main`: both images were built and pushed to ghcr.io
+> (where they can be pulled without a login), the workflow committed the new tags,
+> and Argo CD rolled them out, with no command run by anyone. That took about 6
+> minutes from the push to the new Pods (one measurement). Never tried: an Oracle
+> Cloud VM, which this guide used to assume. Cloud consoles change their menus
 > often, so look for settings by name.
 
 ## What you need
@@ -192,11 +193,14 @@ cluster (never `cert.pem`). Within a few seconds the `cloudflared` logs show
 "Registered tunnel connection" lines, and `cloudflared tunnel info redis-operator-demo`
 lists the connector.
 
-## 6. Argo CD (what makes rollouts automatic; not installed on the VM yet)
+## 6. Argo CD (what makes rollouts automatic)
 
 Argo CD is the part that notices the new image tag the workflow commits and applies
-it. Use the lighter `core-install.yaml` (no UI, no login), which a 4 GB VM can spare;
-the full install needs more memory. The Applications are in `deploy/argocd/hosted/`.
+it. Use the lighter `core-install.yaml` (no UI, no login), which a 4 GB VM can spare
+(it left about 2 GB of the VM's memory free); the full install needs more. The
+Applications are in `deploy/argocd/hosted/`. These are the commands that were run on
+the VM, and all three Applications were `Synced` and `Healthy` about 30 seconds after
+the last one.
 
 ```sh
 kubectl create namespace argocd
@@ -233,9 +237,18 @@ Once steps 3 and 6 are in place, nobody runs a command to ship a change:
    the portal image) move to the new tag. The portal restarts with a brief gap,
    because it runs as a single replica with the `Recreate` strategy.
 
-A second push while a run is still going replaces it, so the tags in git always end
-at the newest build. Nothing has timed this whole path yet; expect the build time
-plus up to about three minutes for Argo CD to notice.
+A second push while a run is still going is meant to replace it, so the tags in git
+always end at the newest build. That replacement has not been tried; only single
+pushes have been.
+
+**Measured once** (23 October 2026, a comment-only change): pushed at 17:28:32 UTC;
+the images were built and pushed and the tag commit made by about 17:32, roughly 3.5
+minutes later; the VM was running the new image by 17:34:34, about 6 minutes after
+the push. Only the operator and portal Pods restarted. The Redis Pods and the tunnel
+were not touched, and the site answered afterwards. The times were read by polling
+every 20 seconds, so they are accurate to about that, and the part that varies most
+is how soon Argo CD's three-minute poll notices the commit. A push that touched only
+docs built nothing, as intended.
 
 To roll back, revert the bot's commit, or run `hack/set-image-tag.sh` with an earlier
 commit SHA: the images for earlier commits stay in ghcr.io.
@@ -313,7 +326,10 @@ Cloudflare's edge answers it with a 403 (`error code: 1000`).
   tab ("Run workflow"). It builds the current `main` again and commits the tags.
 - **Do not edit the image tags in the two hosted overlays by hand.** The workflow owns
   them and the next run overwrites your edit.
-- **Take it down:** `kubectl delete -k deploy/hosting/cloudflared`, then delete the
+- **Take it down:** delete the three Applications first
+  (`kubectl -n argocd delete application redis-portal redis-operator cloudflared`);
+  their finalizer removes what they created. Deleting a resource by hand while the
+  Applications exist only makes Argo CD's self-heal recreate it. Then delete the
   tunnel (`cloudflared tunnel delete redis-operator-demo`) and the CNAME in the
   Cloudflare DNS dashboard.
 

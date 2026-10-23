@@ -131,7 +131,8 @@ This README stays short on purpose. The deeper reading:
 
 What is genuinely not done yet:
 
-- **Argo CD on the hosted VM, and a first end-to-end run of the automated rollout.** CI now builds both images, publishes them to ghcr.io tagged with the commit SHA, and commits the new tags into the hosted overlays ([how it works](docs/hosting.md#how-a-code-change-reaches-the-site)); that half has run for real. The last step, Argo CD noticing that commit and rolling it out, is written and was run on a local kind cluster, but Argo CD is not installed on the VM yet. So the live demo still runs images that were loaded by hand, and no push has yet been followed all the way to a rollout.
+- **A push reaches the live site by polling, not instantly.** CI builds both images, publishes them to ghcr.io tagged with the commit SHA and commits the new tags, and Argo CD on the VM rolls them out ([how it works](docs/hosting.md#how-a-code-change-reaches-the-site)). That took about 6 minutes from push to the new Pods in the one run that was timed. Argo CD checks the repository about every three minutes; a webhook would be faster but needs an inbound path to the VM, which this setup deliberately does not have.
+- **Images are built for `linux/amd64` only,** which matches the VM. An arm64 VM would need `linux/arm64` added to the workflow, and that has not been tried.
 
 The operator itself is deliberately a demo-scale operator: Redis replicas are independent servers (no replication) and Redis has no authentication or TLS. The full list of known limits is in [`DESIGN_NOTES.md`, section 15](docs/DESIGN_NOTES.md#15-known-limitations-and-future-work).
 
