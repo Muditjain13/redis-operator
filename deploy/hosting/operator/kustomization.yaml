@@ -11,4 +11,4 @@ resources:
 images:
   - name: redis-operator
     newName: ghcr.io/muditjain13/redis-operator
-    newTag: "34db6a9f2425d87d4a38872738027635814411fd"
+    newTag: "d9499669b7fb6056a96ba597911719deaca8069a"
